@@ -1,6 +1,6 @@
 [
   {
-    "updatedAt": "2026-09-19T19:24:16.086Z",
+    "updatedAt": "2026-09-19T19:33:03.243Z",
     "createdAt": "2026-09-19T05:51:20.508Z",
     "id": "8ukVVloMcWl0jMkz",
     "name": "Redis Triage Consumer",
@@ -271,7 +271,7 @@
           -50
         ],
         "parameters": {
-          "content": "## Redis queue consumer\n\nRPOP drains queue:intake (C2 will move this to queue:oneshotllc behind the sorter), which is FIFO against the LPUSH producers.\n\nINCR on seen:{owner}/{repo}#{number} is the atomic first-winner claim: it returns 1 only for the first caller, so the webhook and the poller can never both process one issue. TTL 7d keeps the keyspace bounded.\n\nPublish Spec Comment fails the execution on error (C1, .github#28).",
+          "content": "## Redis queue consumer (stream: oneshotllc)\n\nRPOP drains queue:oneshotllc (fed only by the sorter). Items without `stream` are rejected with an error.\n\nINCR on seen:{owner}/{repo}#{number} is the atomic first-winner claim (TTL 7d). After the spec comment is posted: label `hold` is applied (C3, .github#30) and spec:{owner}/{repo}#{n} is set (no TTL). Removing `hold` is Brian's approval; the sorter's approval path then pushes the issue to queue:build:<stream> exactly once (build:{key} INCR).\n\nPublish Spec Comment fails the execution on error (C1).",
           "color": 4,
           "width": 972,
           "height": 312
@@ -319,6 +319,68 @@
         "parameters": {
           "errorType": "errorMessage",
           "errorMessage": "=rejected: item {{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }} has no stream (bypassed the sorter?)"
+        }
+      },
+      {
+        "id": "99d82ae3-3065-4399-88d6-71dca315bcac",
+        "name": "Apply hold Label",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1776,
+          0
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.github.com/repos/{{ $('Render Comment Body').item.json.repository_owner }}/{{ $('Render Comment Body').item.json.repository_name }}/issues/{{ $('Render Comment Body').item.json.issue_number }}/labels",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"labels\":[\"hold\"]}",
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "c5c1a792-8408-41fc-acf2-757d2e9650cc",
+        "name": "Mark Spec Posted",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          2000,
+          0
+        ],
+        "parameters": {
+          "operation": "set",
+          "key": "=spec:{{ $('Render Comment Body').item.json.repository_owner }}/{{ $('Render Comment Body').item.json.repository_name }}#{{ $('Render Comment Body').item.json.issue_number }}",
+          "value": "={{ $now.toISO() }}",
+          "keyType": "string",
+          "expire": false
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
         }
       }
     ],
@@ -453,6 +515,28 @@
             }
           ]
         ]
+      },
+      "Publish Spec Comment": {
+        "main": [
+          [
+            {
+              "node": "Apply hold Label",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply hold Label": {
+        "main": [
+          [
+            {
+              "node": "Mark Spec Posted",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
@@ -475,9 +559,9 @@
     },
     "nodeGroups": [],
     "pinData": null,
-    "versionId": "5976e245-1a20-4c1f-858d-a301bcf0d69b",
-    "activeVersionId": "5976e245-1a20-4c1f-858d-a301bcf0d69b",
-    "versionCounter": 3,
+    "versionId": "f3512b27-8a05-4885-b1cc-8e4fab06521e",
+    "activeVersionId": "f3512b27-8a05-4885-b1cc-8e4fab06521e",
+    "versionCounter": 4,
     "triggerCount": 1,
     "sourceWorkflowId": null,
     "tags": [],
@@ -502,8 +586,8 @@
       }
     ],
     "versionMetadata": {
-      "name": "C2: read queue:oneshotllc; reject items without stream",
-      "description": "oneshotllc/.github#29 scenario 3: consumer reads the stream queue only and stops with an error on any item lacking `stream`."
+      "name": "C3: apply hold after spec, record spec: key (draft, not yet published)",
+      "description": "oneshotllc/.github#30 scenario 3: every triaged issue is labeled hold right after its spec comment, and spec:{key} is recorded so the sorter's approval path can release it later."
     }
   }
 ]
