@@ -1,0 +1,426 @@
+[
+  {
+    "updatedAt": "2026-09-19T19:25:27.235Z",
+    "createdAt": "2026-09-19T19:25:01.601Z",
+    "id": "EuMYAIadQbkYh0FH",
+    "name": "Queue Sorter (intake → stream)",
+    "description": "C2 sorter (oneshotllc/.github#29): drains queue:intake, drops already-seen items, routes repo→stream via oneshotllc/.github automation/streams.json, pushes to queue:<stream> with stream in the payload.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "096d972a-b8bd-440e-9b61-b93be114da7a",
+        "name": "Every Minute",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "2ad4b96d-9d20-4f8d-939a-7f291c5e3b9a",
+        "name": "Load Routing Table",
+        "type": "n8n-nodes-base.github",
+        "typeVersion": 1.1,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "authentication": "githubAppApi",
+          "resource": "file",
+          "operation": "get",
+          "owner": {
+            "__rl": true,
+            "mode": "name",
+            "value": "oneshotllc"
+          },
+          "repository": {
+            "__rl": true,
+            "mode": "name",
+            "value": ".github"
+          },
+          "filePath": "automation/streams.json",
+          "asBinaryProperty": false,
+          "additionalParameters": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        },
+        "webhookId": "f7bd16a5-2791-4d92-9dee-a0e0086bf273"
+      },
+      {
+        "id": "e4116335-9872-486e-ab4f-c303b6632d7a",
+        "name": "Pop Intake Item",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          440,
+          200
+        ],
+        "parameters": {
+          "operation": "pop",
+          "list": "queue:intake",
+          "tail": true,
+          "propertyName": "item",
+          "options": {}
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "b025b51a-f788-4f8d-98a9-952426500376",
+        "name": "Had Item",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          660,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.item }}",
+                "operator": {
+                  "type": "object",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              },
+              {
+                "leftValue": "={{ $runIndex }}",
+                "operator": {
+                  "type": "number",
+                  "operation": "lt"
+                },
+                "rightValue": 500
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "2be921cb-3623-4bd4-82c3-598e77b4b25f",
+        "name": "Intake Empty",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          880,
+          360
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "ad89d26e-64b0-4cf0-a4bd-e4252d4b920f",
+        "name": "Check Seen",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          880,
+          100
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "seen",
+          "key": "=seen:{{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }}",
+          "keyType": "string",
+          "options": {}
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "e6f63080-71bf-4d8a-bc3b-9f31b78ec0a1",
+        "name": "Already Seen",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1100,
+          100
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.seen }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "bc4dea2c-f86c-4915-8f9a-4ae40b4487b1",
+        "name": "Drop Duplicate",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1320,
+          0
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "6d6ecf18-4114-4326-abe4-8406a79bd61d",
+        "name": "Route To Stream",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          200
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "language": "javaScript",
+          "jsCode": "// Sorter routing (C2, oneshotllc/.github#29). Table lookup only; never logic that needs a model.\nconst src = $('Pop Intake Item').item.json.item;\nconst raw = $('Load Routing Table').first().json.content || '';\nconst table = JSON.parse(Buffer.from(String(raw).replace(/\\n/g, ''), 'base64').toString('utf8'));\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of (table.rules || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = table.default || null;\nif (!stream) throw new Error(`sorter: no stream for ${full} and no default in streams.json`);\nconst item = Object.assign({}, src, { stream });\nreturn { json: { stream, key: `${full}#${src.issue_number}`, payload: JSON.stringify(item) } };"
+        }
+      },
+      {
+        "id": "6f4e592e-a3b7-44d7-8142-ac604c798184",
+        "name": "Push To Stream Queue",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1540,
+          200
+        ],
+        "parameters": {
+          "operation": "push",
+          "list": "=queue:{{ $json.stream }}",
+          "messageData": "={{ $json.payload }}",
+          "tail": false
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "253e7fc5-b914-4c7b-aacf-fad12bf82f83",
+        "name": "Sorter Notes",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -160
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 1700,
+          "height": 300,
+          "content": "## Sorter (C2, oneshotllc/.github#29)\n\nThe only place routing lives. Every minute: load `automation/streams.json` from oneshotllc/.github once, then loop RPOP `queue:intake` (max 500 per run): drop anything whose `seen:{owner}/{repo}#{n}` claim already exists, otherwise look up repo → stream in the table and LPUSH to `queue:<stream>` with `stream` set in the payload.\n\nNo model calls here, ever. If a rule needs judgment it belongs in triage. Consumers read `queue:<stream>` only and reject items without `stream`. The consumer's INCR claim stays the atomic first-winner guard; the EXISTS check here only stops already-handled items from re-entering a stream queue."
+        }
+      }
+    ],
+    "connections": {
+      "Every Minute": {
+        "main": [
+          [
+            {
+              "node": "Load Routing Table",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load Routing Table": {
+        "main": [
+          [
+            {
+              "node": "Pop Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pop Intake Item": {
+        "main": [
+          [
+            {
+              "node": "Had Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Had Item": {
+        "main": [
+          [
+            {
+              "node": "Check Seen",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Intake Empty",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Seen": {
+        "main": [
+          [
+            {
+              "node": "Already Seen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Already Seen": {
+        "main": [
+          [
+            {
+              "node": "Drop Duplicate",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Route To Stream",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Drop Duplicate": {
+        "main": [
+          [
+            {
+              "node": "Pop Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Route To Stream": {
+        "main": [
+          [
+            {
+              "node": "Push To Stream Queue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Push To Stream Queue": {
+        "main": [
+          [
+            {
+              "node": "Pop Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "saveDataErrorExecution": "all",
+      "saveDataSuccessExecution": "all"
+    },
+    "staticData": {
+      "node:Every Minute": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": null,
+    "versionId": "5df96374-c77a-4792-8d98-6f85ce7a52a5",
+    "activeVersionId": "5df96374-c77a-4792-8d98-6f85ce7a52a5",
+    "versionCounter": 2,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-19T19:25:01.602Z",
+        "createdAt": "2026-09-19T19:25:01.602Z",
+        "role": "workflow:owner",
+        "workflowId": "EuMYAIadQbkYh0FH",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": "C2: drain loop, seen check, table routing, push to stream queue",
+      "description": "Full sorter graph: pop intake in a loop (max 500/run), EXISTS check on seen:*, route via streams.json, LPUSH to queue:<stream>. Loop edges Drop Duplicate → Pop and Push → Pop."
+    }
+  }
+]

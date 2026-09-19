@@ -1,1 +1,147 @@
-{"updatedAt":"2026-09-19T05:49:20.213Z","createdAt":"2026-08-24T07:27:23.333Z","id":"d59YY3F06IEMKLWh","name":"GitHub Issue TDD BDD Triage","description":"Verified GitHub issue events pass a persistent atomic delivery-ID guard before Claude, then publish exactly one managed TDD/BDD comment through the loopback bridge.","active":true,"isArchived":false,"nodes":[{"parameters":{"httpMethod":"POST","path":"github-issue-triage","options":{"responseCode":{"values":{"responseCode":"customCode","customCode":202}},"responseData":"{\"accepted\":true}","responseHeaders":{"entries":[{"name":"Content-Type","value":"application/json"}]}}},"id":"f5f9f383-d63f-4e27-b383-c2be43147288","name":"Triage Intake","type":"n8n-nodes-base.webhook","typeVersion":2.1,"position":[0,112],"webhookId":"f7b28248-24da-4672-8f35-01be6f74c078"},{"id":"14876eb2-a940-4aac-9418-50f8657c3832","name":"Normalize Intake Item","type":"n8n-nodes-base.code","typeVersion":2,"position":[224,112],"parameters":{"jsCode":"const src = $json.body ?? $json;\nconst owner = src.repository_owner ?? \"\";\nconst repo = src.repository_name ?? \"\";\nconst number = Number(src.issue_number ?? 0);\nconst item = {\n  delivery_id: src.delivery_id ?? (\"reconcile:\" + owner + \"/\" + repo + \"#\" + number),\n  repository_owner: owner,\n  repository_name: repo,\n  issue_number: number,\n  title: src.title ?? \"\",\n  body: src.body ?? \"\",\n  labels: src.labels ?? [],\n  author: src.author ?? \"\",\n  issue_url: src.issue_url ?? \"\"\n};\nreturn { json: { item, payload: JSON.stringify(item) } };","mode":"runOnceForEachItem"}},{"id":"231ef67f-1924-4969-a48b-179ce6ca2d75","name":"Enqueue To Redis Queue","type":"n8n-nodes-base.redis","typeVersion":1,"position":[448,112],"parameters":{"list":"triage:queue","messageData":"={{ $json.payload }}","operation":"push","tail":false},"credentials":{"redis":{"id":"redisLocalQueue1","name":"Redis (local triage queue)"}}}],"connections":{"Triage Intake":{"main":[[{"node":"Normalize Intake Item","type":"main","index":0}]]},"Normalize Intake Item":{"main":[[{"node":"Enqueue To Redis Queue","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","availableInMCP":true,"binaryMode":"separate"},"staticData":null,"meta":{"aiBuilderAssisted":true,"builderVariant":"mcp"},"nodeGroups":[],"pinData":{},"versionId":"ea8e2943-5067-421f-b89a-3e478c2f59da","activeVersionId":"ea8e2943-5067-421f-b89a-3e478c2f59da","versionCounter":8,"triggerCount":1,"sourceWorkflowId":null,"tags":[],"shared":[{"updatedAt":"2026-08-24T07:27:23.334Z","createdAt":"2026-08-24T07:27:23.334Z","role":"workflow:owner","workflowId":"d59YY3F06IEMKLWh","projectId":"kbxEhpIE8mw6KCCA","project":{"updatedAt":"2026-09-12T22:56:00.120Z","createdAt":"2026-08-23T06:40:56.864Z","id":"kbxEhpIE8mw6KCCA","name":"Brian OneShot <brianoneshotstudios@gmail.com>","type":"personal","icon":null,"description":null,"customTelemetryTags":[],"creatorId":"afec8277-c846-4a78-ad09-de32230bae42"}}],"versionMetadata":{"name":"Redis LPUSH ingress","description":"Replaced the dead 127.0.0.1:8766 claim/result HTTP calls with a Redis LPUSH to 'triage:queue'. The webhook remains the ingress; a Code node normalizes the payload and the Redis node enqueues it. Model/publish work moves to the new Redis Triage Consumer workflow."}}
+[
+  {
+    "updatedAt": "2026-09-19T19:14:35.549Z",
+    "createdAt": "2026-08-24T07:27:23.333Z",
+    "id": "d59YY3F06IEMKLWh",
+    "name": "GitHub Issue TDD BDD Triage",
+    "description": "Webhook intake: POST /webhook/github-issue-triage normalizes the item and LPUSHes to queue:intake. C4 (.github#31) adds GitHub signature verification and real GitHub payload parsing.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "github-issue-triage",
+          "options": {
+            "responseCode": {
+              "values": {
+                "responseCode": "customCode",
+                "customCode": 202
+              }
+            },
+            "responseData": "{\"accepted\":true}",
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            }
+          }
+        },
+        "id": "f5f9f383-d63f-4e27-b383-c2be43147288",
+        "name": "Triage Intake",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          0,
+          112
+        ],
+        "webhookId": "f7b28248-24da-4672-8f35-01be6f74c078"
+      },
+      {
+        "id": "14876eb2-a940-4aac-9418-50f8657c3832",
+        "name": "Normalize Intake Item",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          224,
+          112
+        ],
+        "parameters": {
+          "jsCode": "const src = $json.body ?? $json;\nconst owner = src.repository_owner ?? \"\";\nconst repo = src.repository_name ?? \"\";\nconst number = Number(src.issue_number ?? 0);\nconst item = {\n  delivery_id: src.delivery_id ?? (\"reconcile:\" + owner + \"/\" + repo + \"#\" + number),\n  repository_owner: owner,\n  repository_name: repo,\n  issue_number: number,\n  title: src.title ?? \"\",\n  body: src.body ?? \"\",\n  labels: src.labels ?? [],\n  author: src.author ?? \"\",\n  issue_url: src.issue_url ?? \"\"\n};\nreturn { json: { item, payload: JSON.stringify(item) } };",
+          "mode": "runOnceForEachItem"
+        }
+      },
+      {
+        "id": "231ef67f-1924-4969-a48b-179ce6ca2d75",
+        "name": "Enqueue To Redis Queue",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          448,
+          112
+        ],
+        "parameters": {
+          "list": "queue:intake",
+          "messageData": "={{ $json.payload }}",
+          "operation": "push",
+          "tail": false
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Triage Intake": {
+        "main": [
+          [
+            {
+              "node": "Normalize Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Intake Item": {
+        "main": [
+          [
+            {
+              "node": "Enqueue To Redis Queue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "binaryMode": "separate"
+    },
+    "staticData": null,
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": {},
+    "versionId": "bffb9118-1ece-40f6-a81d-675012ea0c3d",
+    "activeVersionId": "bffb9118-1ece-40f6-a81d-675012ea0c3d",
+    "versionCounter": 9,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-08-24T07:27:23.334Z",
+        "createdAt": "2026-08-24T07:27:23.334Z",
+        "role": "workflow:owner",
+        "workflowId": "d59YY3F06IEMKLWh",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": "C1: push to queue:intake",
+      "description": "oneshotllc/.github#28 scenario 1: rename triage:queue -> queue:intake."
+    }
+  }
+]
