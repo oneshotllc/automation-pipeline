@@ -2,7 +2,7 @@
 # C4 webhook check (oneshotllc/.github#31). Exit 0 = PASS.
 # 1) bad signature -> 401; 2) good signature on a synthetic issues.opened -> 202 and the item lands in queue:intake.
 set -uo pipefail
-URL=${1:-https://macstudio.tailcb79bc.ts.net:10000/webhook/github-issue-triage}
+URL=${1:-${TRIAGE_WEBHOOK_URL:?pass the webhook URL as $1 or set TRIAGE_WEBHOOK_URL}}
 SECRET=$(cat "$HOME/.config/oneshot-pr/webhook-secret")
 N=$((RANDOM+100000))
 BODY=$(printf '{"action":"opened","issue":{"number":%d,"title":"C4 signature check","body":"synthetic","labels":[],"state":"open","user":{"login":"bwoestman"},"html_url":"https://github.com/oneshotllc/template-smoke/issues/%d"},"repository":{"name":"template-smoke","full_name":"oneshotllc/template-smoke","owner":{"login":"oneshotllc"}},"sender":{"login":"bwoestman","type":"User"}}' $N $N)
