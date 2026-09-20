@@ -1,512 +1,510 @@
-[
-  {
-    "updatedAt": "2026-09-19T19:50:16.657Z",
-    "createdAt": "2026-08-24T07:58:18.604Z",
-    "id": "21FtNFI7kOtGcLUQ",
-    "name": "GitHub PR Feedback Repair Loop",
-    "description": "PR feedback loop. Repointed to oneshotllc/* in C4 (.github#31); still POSTs to the retired 127.0.0.1:8776 service and is re-wired in C8 (.github#35). Nothing delivers to its webhook until then.",
-    "active": true,
-    "isArchived": false,
-    "nodes": [
-      {
-        "parameters": {
-          "content": "One durable local event-backed queue owns build, verify, QA/review, merge, code repair, and infrastructure retry state. Signed webhook events are handed off only after the local service confirms durable semantic acceptance. The local due-time scheduler is the only scheduler; durable queue timestamps survive restart and wake retry or reconciliation work without a parallel n8n watchdog. Zero-step Actions startup failures enter bounded VERIFY_BACKOFF without coder dispatch or repair-attempt consumption."
-        },
-        "id": "65f26934-19f0-448b-92cf-91f7557bda52",
-        "name": "Lifecycle Policy",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          -128,
-          448
-        ]
+{
+  "updatedAt": "2026-09-19T19:50:16.657Z",
+  "createdAt": "2026-08-24T07:58:18.604Z",
+  "id": "21FtNFI7kOtGcLUQ",
+  "name": "GitHub PR Feedback Repair Loop",
+  "description": "PR feedback loop. Repointed to oneshotllc/* in C4 (.github#31); still POSTs to the retired 127.0.0.1:8776 service and is re-wired in C8 (.github#35). Nothing delivers to its webhook until then.",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "content": "One durable local event-backed queue owns build, verify, QA/review, merge, code repair, and infrastructure retry state. Signed webhook events are handed off only after the local service confirms durable semantic acceptance. The local due-time scheduler is the only scheduler; durable queue timestamps survive restart and wake retry or reconciliation work without a parallel n8n watchdog. Zero-step Actions startup failures enter bounded VERIFY_BACKOFF without coder dispatch or repair-attempt consumption."
       },
-      {
-        "parameters": {
-          "authentication": "none",
-          "httpMethod": "POST",
-          "options": {},
-          "path": "github-pr-feedback-repair",
-          "responseMode": "lastNode"
-        },
-        "id": "c6619c58-5d65-43bf-91e8-50c10eb32951",
-        "name": "PR Lifecycle Webhook",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2.1,
-        "position": [
-          0,
-          96
-        ],
-        "webhookId": "0485beeb-2a48-4a14-8ea1-748ae8cd0c88"
+      "id": "65f26934-19f0-448b-92cf-91f7557bda52",
+      "name": "Lifecycle Policy",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "httpMethod": "POST",
+        "options": {},
+        "path": "github-pr-feedback-repair",
+        "responseMode": "lastNode"
       },
-      {
-        "id": "710e52e4-599f-4f12-a7dc-f8e6d4221641",
-        "name": "Normalize Signed Event",
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          256,
-          96
-        ],
-        "parameters": {
-          "assignments": {
-            "assignments": [
-              {
-                "id": "repository",
-                "name": "repository",
-                "type": "string",
-                "value": "={{ $json.body?.repository ?? $json.body?.feedback?.repository ?? $json.repository ?? $json.feedback?.repository ?? \"\" }}"
-              },
-              {
-                "id": "event",
-                "name": "event",
-                "type": "string",
-                "value": "={{ $json.body?.event ?? $json.event ?? \"\" }}"
-              },
-              {
-                "id": "payload",
-                "name": "payload",
-                "type": "object",
-                "value": "={{ $json.body ?? $json }}"
-              }
-            ]
-          },
-          "includeOtherFields": false,
-          "mode": "manual"
-        }
-      },
-      {
-        "id": "db21be2b-2609-4a5f-93ee-a0bb67d05a9b",
-        "name": "Only oneshotllc repos",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          512,
-          96
-        ],
-        "parameters": {
-          "conditions": {
-            "combinator": "and",
-            "conditions": [
-              {
-                "id": "repo-boundary",
-                "leftValue": "={{ $json.repository }}",
-                "operator": {
-                  "operation": "startsWith",
-                  "type": "string"
-                },
-                "rightValue": "oneshotllc/"
-              }
-            ],
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
+      "id": "c6619c58-5d65-43bf-91e8-50c10eb32951",
+      "name": "PR Lifecycle Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        96
+      ],
+      "webhookId": "0485beeb-2a48-4a14-8ea1-748ae8cd0c88"
+    },
+    {
+      "id": "710e52e4-599f-4f12-a7dc-f8e6d4221641",
+      "name": "Normalize Signed Event",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        96
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "repository",
+              "name": "repository",
+              "type": "string",
+              "value": "={{ $json.body?.repository ?? $json.body?.feedback?.repository ?? $json.repository ?? $json.feedback?.repository ?? \"\" }}"
+            },
+            {
+              "id": "event",
+              "name": "event",
+              "type": "string",
+              "value": "={{ $json.body?.event ?? $json.event ?? \"\" }}"
+            },
+            {
+              "id": "payload",
+              "name": "payload",
+              "type": "object",
+              "value": "={{ $json.body ?? $json }}"
             }
-          }
-        }
-      },
-      {
-        "id": "6547e1d0-32ad-4f68-9658-1138dc3528f0",
-        "name": "Ignored Wrong Repository",
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          768,
-          208
-        ],
-        "parameters": {
-          "assignments": {
-            "assignments": [
-              {
-                "id": "accepted",
-                "name": "accepted",
-                "type": "boolean",
-                "value": false
-              },
-              {
-                "id": "status",
-                "name": "status",
-                "type": "string",
-                "value": "IGNORED_REPOSITORY"
-              },
-              {
-                "id": "fail-closed",
-                "name": "fail_closed",
-                "type": "boolean",
-                "value": true
-              }
-            ]
-          },
-          "includeOtherFields": false,
-          "mode": "manual"
-        }
-      },
-      {
-        "id": "471c9e38-5f03-4ab8-99d6-407b28ae719a",
-        "name": "Dispatch Bounded Local Lifecycle",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.5,
-        "position": [
-          992,
-          32
-        ],
-        "parameters": {
-          "authentication": "none",
-          "contentType": "json",
-          "jsonBody": "={{ $json.payload }}",
-          "method": "POST",
-          "options": {
-            "timeout": 10000
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "url": "http://127.0.0.1:8776/internal/pr-lifecycle"
+          ]
         },
-        "retryOnFail": true,
-        "maxTries": 2,
-        "waitBetweenTries": 1000
-      },
-      {
-        "id": "7b1c3813-b7e9-4976-9c1a-369c4e9c372e",
-        "name": "Record Dispatch Evidence",
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          1248,
-          96
-        ],
-        "parameters": {
-          "assignments": {
-            "assignments": [
-              {
-                "id": "automation",
-                "name": "automation",
-                "type": "string",
-                "value": "github-n8n-hermes-state-lifecycle"
+        "includeOtherFields": false,
+        "mode": "manual"
+      }
+    },
+    {
+      "id": "db21be2b-2609-4a5f-93ee-a0bb67d05a9b",
+      "name": "Only oneshotllc repos",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        512,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "repo-boundary",
+              "leftValue": "={{ $json.repository }}",
+              "operator": {
+                "operation": "startsWith",
+                "type": "string"
               },
-              {
-                "id": "fail-closed",
-                "name": "fail_closed",
-                "type": "boolean",
-                "value": "={{ $json.accepted !== true }}"
-              }
-            ]
-          },
-          "includeOtherFields": true,
-          "mode": "manual"
-        }
-      },
-      {
-        "id": "7a9e215d-ee1b-42cd-a08d-ef4ae51cd81f",
-        "name": "State Event or Feedback",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          960,
-          96
-        ],
-        "parameters": {
-          "conditions": {
-            "combinator": "and",
-            "conditions": [
-              {
-                "id": "state-event",
-                "leftValue": "={{ $json.event }}",
-                "operator": {
-                  "operation": "equals",
-                  "type": "string"
-                },
-                "rightValue": "pull_request"
-              }
-            ],
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
+              "rightValue": "oneshotllc/"
             }
-          }
-        }
-      },
-      {
-        "id": "53297e0b-3d09-4e4a-8014-7d1048b5a2ea",
-        "name": "Queue Authorized Feedback",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.5,
-        "position": [
-          992,
-          160
-        ],
-        "parameters": {
-          "authentication": "none",
-          "contentType": "json",
-          "jsonBody": "={{ $json.payload }}",
-          "method": "POST",
+          ],
           "options": {
-            "timeout": 10000
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "url": "http://127.0.0.1:8776/internal/pr-lifecycle"
-        },
-        "retryOnFail": true,
-        "maxTries": 2,
-        "waitBetweenTries": 1000
-      },
-      {
-        "id": "eda576c2-1a5b-493d-ba09-a7d40a1d8602",
-        "name": "Dispatch Durable Backlog Drain",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.5,
-        "position": [
-          768,
-          400
-        ],
-        "parameters": {
-          "authentication": "none",
-          "contentType": "json",
-          "jsonBody": "={{ $json.payload ?? $json }}",
-          "method": "POST",
-          "options": {
-            "timeout": 10000
-          },
-          "sendBody": true,
-          "specifyBody": "json",
-          "url": "http://127.0.0.1:8776/internal/backlog-drain"
-        },
-        "retryOnFail": true,
-        "maxTries": 2,
-        "waitBetweenTries": 1000
-      },
-      {
-        "id": "8d91cb96-9bf2-4696-a88b-686bb0c6e58d",
-        "name": "Record Drain Dispatch Evidence",
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
-        "position": [
-          1024,
-          400
-        ],
-        "parameters": {
-          "assignments": {
-            "assignments": [
-              {
-                "id": "automation",
-                "name": "automation",
-                "type": "string",
-                "value": "github-n8n-hermes-durable-backlog-drain"
-              },
-              {
-                "id": "fail-closed",
-                "name": "fail_closed",
-                "type": "boolean",
-                "value": "={{ $json.accepted !== true }}"
-              }
-            ]
-          },
-          "includeOtherFields": true,
-          "mode": "manual"
-        }
-      },
-      {
-        "id": "1eba2a8a-e677-44d3-9674-e22a94aa0b0e",
-        "name": "Immediate Drain or Lifecycle",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          736,
-          96
-        ],
-        "parameters": {
-          "conditions": {
-            "combinator": "and",
-            "conditions": [
-              {
-                "id": "immediate-drain-event",
-                "leftValue": "={{ $json.event }}",
-                "operator": {
-                  "operation": "equals",
-                  "type": "string"
-                },
-                "rightValue": "drain"
-              }
-            ],
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict"
-            }
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
           }
         }
       }
-    ],
-    "connections": {
-      "PR Lifecycle Webhook": {
-        "main": [
-          [
+    },
+    {
+      "id": "6547e1d0-32ad-4f68-9658-1138dc3528f0",
+      "name": "Ignored Wrong Repository",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        768,
+        208
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
             {
-              "node": "Normalize Signed Event",
-              "type": "main",
-              "index": 0
+              "id": "accepted",
+              "name": "accepted",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "IGNORED_REPOSITORY"
+            },
+            {
+              "id": "fail-closed",
+              "name": "fail_closed",
+              "type": "boolean",
+              "value": true
             }
           ]
-        ]
-      },
-      "Normalize Signed Event": {
-        "main": [
-          [
-            {
-              "node": "Only oneshotllc repos",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Dispatch Bounded Local Lifecycle": {
-        "main": [
-          [
-            {
-              "node": "Record Dispatch Evidence",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "State Event or Feedback": {
-        "main": [
-          [
-            {
-              "node": "Dispatch Bounded Local Lifecycle",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Queue Authorized Feedback",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Dispatch Durable Backlog Drain": {
-        "main": [
-          [
-            {
-              "node": "Record Drain Dispatch Evidence",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Immediate Drain or Lifecycle": {
-        "main": [
-          [
-            {
-              "node": "Dispatch Durable Backlog Drain",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "State Event or Feedback",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Queue Authorized Feedback": {
-        "main": [
-          [
-            {
-              "node": "Record Dispatch Evidence",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Only oneshotllc repos": {
-        "main": [
-          [
-            {
-              "node": "Immediate Drain or Lifecycle",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Ignored Wrong Repository",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
+        },
+        "includeOtherFields": false,
+        "mode": "manual"
       }
     },
-    "settings": {
-      "executionOrder": "v1",
-      "availableInMCP": true,
-      "binaryMode": "separate",
-      "timezone": "America/Chicago",
-      "saveExecutionProgress": true,
-      "saveManualExecutions": true,
-      "saveDataErrorExecution": "all",
-      "saveDataSuccessExecution": "all",
-      "executionTimeout": 30
+    {
+      "id": "471c9e38-5f03-4ab8-99d6-407b28ae719a",
+      "name": "Dispatch Bounded Local Lifecycle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        992,
+        32
+      ],
+      "parameters": {
+        "authentication": "none",
+        "contentType": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "method": "POST",
+        "options": {
+          "timeout": 10000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "http://127.0.0.1:8776/internal/pr-lifecycle"
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
     },
-    "staticData": {
-      "node:Reconcile Every 10 Minutes": {
-        "recurrenceRules": [
-          null
-        ],
-        "recurrenceRuleSignatures": [
-          null
-        ]
+    {
+      "id": "7b1c3813-b7e9-4976-9c1a-369c4e9c372e",
+      "name": "Record Dispatch Evidence",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1248,
+        96
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "automation",
+              "name": "automation",
+              "type": "string",
+              "value": "github-n8n-hermes-state-lifecycle"
+            },
+            {
+              "id": "fail-closed",
+              "name": "fail_closed",
+              "type": "boolean",
+              "value": "={{ $json.accepted !== true }}"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "mode": "manual"
       }
     },
-    "meta": {
-      "aiBuilderAssisted": true,
-      "builderVariant": "mcp"
-    },
-    "nodeGroups": [],
-    "pinData": {},
-    "versionId": "85d92185-513c-441a-be77-f90be8b934a9",
-    "activeVersionId": "85d92185-513c-441a-be77-f90be8b934a9",
-    "versionCounter": 11,
-    "triggerCount": 1,
-    "sourceWorkflowId": null,
-    "tags": [],
-    "shared": [
-      {
-        "updatedAt": "2026-08-24T07:58:18.606Z",
-        "createdAt": "2026-08-24T07:58:18.606Z",
-        "role": "workflow:owner",
-        "workflowId": "21FtNFI7kOtGcLUQ",
-        "projectId": "kbxEhpIE8mw6KCCA",
-        "project": {
-          "updatedAt": "2026-09-12T22:56:00.120Z",
-          "createdAt": "2026-08-23T06:40:56.864Z",
-          "id": "kbxEhpIE8mw6KCCA",
-          "name": "oneshotllc",
-          "type": "personal",
-          "icon": null,
-          "description": null,
-          "customTelemetryTags": [],
-          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+    {
+      "id": "7a9e215d-ee1b-42cd-a08d-ef4ae51cd81f",
+      "name": "State Event or Feedback",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "state-event",
+              "leftValue": "={{ $json.event }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "pull_request"
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          }
         }
       }
-    ],
-    "versionMetadata": {
-      "name": "C4: repoint repo boundary from oneshotmn/oneshotmn to oneshotllc/*",
-      "description": "Updated nodes: Only oneshotllc repos\nConnections: 3 added, 3 removed"
+    },
+    {
+      "id": "53297e0b-3d09-4e4a-8014-7d1048b5a2ea",
+      "name": "Queue Authorized Feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        992,
+        160
+      ],
+      "parameters": {
+        "authentication": "none",
+        "contentType": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "method": "POST",
+        "options": {
+          "timeout": 10000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "http://127.0.0.1:8776/internal/pr-lifecycle"
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "eda576c2-1a5b-493d-ba09-a7d40a1d8602",
+      "name": "Dispatch Durable Backlog Drain",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        768,
+        400
+      ],
+      "parameters": {
+        "authentication": "none",
+        "contentType": "json",
+        "jsonBody": "={{ $json.payload ?? $json }}",
+        "method": "POST",
+        "options": {
+          "timeout": 10000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "url": "http://127.0.0.1:8776/internal/backlog-drain"
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "8d91cb96-9bf2-4696-a88b-686bb0c6e58d",
+      "name": "Record Drain Dispatch Evidence",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1024,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "automation",
+              "name": "automation",
+              "type": "string",
+              "value": "github-n8n-hermes-durable-backlog-drain"
+            },
+            {
+              "id": "fail-closed",
+              "name": "fail_closed",
+              "type": "boolean",
+              "value": "={{ $json.accepted !== true }}"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "mode": "manual"
+      }
+    },
+    {
+      "id": "1eba2a8a-e677-44d3-9674-e22a94aa0b0e",
+      "name": "Immediate Drain or Lifecycle",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        736,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "immediate-drain-event",
+              "leftValue": "={{ $json.event }}",
+              "operator": {
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "drain"
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          }
+        }
+      }
     }
+  ],
+  "connections": {
+    "PR Lifecycle Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Signed Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Signed Event": {
+      "main": [
+        [
+          {
+            "node": "Only oneshotllc repos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Bounded Local Lifecycle": {
+      "main": [
+        [
+          {
+            "node": "Record Dispatch Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "State Event or Feedback": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Bounded Local Lifecycle",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Authorized Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Durable Backlog Drain": {
+      "main": [
+        [
+          {
+            "node": "Record Drain Dispatch Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Immediate Drain or Lifecycle": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Durable Backlog Drain",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "State Event or Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Authorized Feedback": {
+      "main": [
+        [
+          {
+            "node": "Record Dispatch Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Only oneshotllc repos": {
+      "main": [
+        [
+          {
+            "node": "Immediate Drain or Lifecycle",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignored Wrong Repository",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timezone": "America/Chicago",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 30
+  },
+  "staticData": {
+    "node:Reconcile Every 10 Minutes": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "85d92185-513c-441a-be77-f90be8b934a9",
+  "activeVersionId": "85d92185-513c-441a-be77-f90be8b934a9",
+  "versionCounter": 11,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-08-24T07:58:18.606Z",
+      "createdAt": "2026-08-24T07:58:18.606Z",
+      "role": "workflow:owner",
+      "workflowId": "21FtNFI7kOtGcLUQ",
+      "projectId": "kbxEhpIE8mw6KCCA",
+      "project": {
+        "updatedAt": "2026-09-12T22:56:00.120Z",
+        "createdAt": "2026-08-23T06:40:56.864Z",
+        "id": "kbxEhpIE8mw6KCCA",
+        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "C4: repoint repo boundary from oneshotmn/oneshotmn to oneshotllc/*",
+    "description": "Updated nodes: Only oneshotllc repos\nConnections: 3 added, 3 removed"
   }
-]
+}
