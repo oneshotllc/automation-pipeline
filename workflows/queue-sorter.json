@@ -212,7 +212,7 @@
         "color": 4,
         "width": 1700,
         "height": 300,
-        "content": "## Queue Sorter\n\nMechanics only; names come from the config key. Every run: load config, then loop-pop the intake queue (max 500 per run).\n\nTriage path (not yet seen): route repo to stream from `streams.rules` / `streams.default`, push to `<stream_prefix><stream>`.\n\nApproval path (already seen): an issue (not a PR) without the hold label whose spec marker exists is claimed once (`<build_prefix><key>` INCR) and pushed to `<build_prefix stream queue>`; the consumer of that queue builds it.\n\nNo model call. Table lookups and key checks only."
+        "content": "## Queue Sorter\n\nMechanics only; names come from the config key. Every run: load config, then loop-pop the intake queue (max 500 per run).\n\nTriage path (not yet seen): route repo to stream from `streams.rules` / `streams.default`, push to `<stream_prefix><stream>`.\n\nApproval path (already seen): an issue (not a PR) without the hold label whose spec marker exists is checked for open blockers: GitHub issue dependencies first; if that API is unavailable, body lines `<chain.blocked_by_line> #N` are resolved. Only the head of its chain (no open blocker) is claimed once (`<build_prefix><key>` INCR) and pushed to the stream's build queue; a blocked issue is skipped and re-checked on the next sweep. Insert a new issue between two by re-pointing the dependency links; the next sweep picks the new head.\n\nNo model call. Table lookups, key checks and dependency reads only."
       }
     },
     {
@@ -439,6 +439,201 @@
         "language": "javaScript",
         "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
       }
+    },
+    {
+      "id": "79a8f623-b061-4367-ab3c-152d0e0718ef",
+      "name": "Blockers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/dependencies/blocked_by?per_page=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "804b1560-4c18-46a7-9665-3c1c2a4dfef6",
+      "name": "Blocker Refs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        -300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Head-of-chain rule. Primary: the dependencies API (blocked_by). Fallback: body lines '<blocked_by_line> #N'.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst resp = $input.first().json;\nconst status = Number(resp.statusCode || 0);\nconst body = resp.body;\nif (status >= 200 && status < 300 && Array.isArray(body)) {\n  const open = body.filter(b => b && b.state === 'open').map(b => b.number);\n  return [{ json: { source: 'api', open_blockers: open, refs: [], head: open.length === 0 } }];\n}\nconst marker = String((cfg.chain && cfg.chain.blocked_by_line) || 'Blocked by:');\nconst re = new RegExp(marker.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\\\s*#(\\\\d+)', 'gi');\nconst refs = []; let m; while ((m = re.exec(String(src.body || '')))) refs.push(Number(m[1]));\nreturn [{ json: { source: 'body', open_blockers: [], refs, head: refs.length === 0 } }];"
+      }
+    },
+    {
+      "id": "309c5eb7-0e80-4559-bdc8-90c5473e10d0",
+      "name": "Needs Ref Lookup",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.source === 'body' && $json.refs.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "57fa08b8-08a0-425f-827a-1e3205377fec",
+      "name": "One Item Per Ref",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        -420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const src = $('Pop Intake Item').item.json.item;\nreturn $input.first().json.refs.map(n => ({ json: { owner: src.repository_owner, repo: src.repository_name, number: n } }));"
+      }
+    },
+    {
+      "id": "80a358a1-9c08-49a5-ad5a-909b1a1a09e5",
+      "name": "Ref Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        -420
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/issues/{{ $json.number }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "c12eb31d-1d51-4e5c-b4f2-546e536bfb2f",
+      "name": "Refs Closed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        -420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const open = $input.all().filter(i => i.json.state === 'open').map(i => i.json.number);\nreturn [{ json: { source: 'body', open_blockers: open, head: open.length === 0 } }];"
+      }
+    },
+    {
+      "id": "33b23e10-daec-4301-9522-3ec76526c972",
+      "name": "Head Of Chain",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.head }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "00e111e5-d46d-4a80-96d2-8c985c0fbdf3",
+      "name": "Waiting On Blocker",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3740,
+        -160
+      ],
+      "parameters": {}
     }
   ],
   "connections": {
@@ -577,7 +772,7 @@
       "main": [
         [
           {
-            "node": "Claim Build",
+            "node": "Blockers",
             "type": "main",
             "index": 0
           }
@@ -665,6 +860,108 @@
       ]
     },
     "Config": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blockers": {
+      "main": [
+        [
+          {
+            "node": "Blocker Refs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blocker Refs": {
+      "main": [
+        [
+          {
+            "node": "Needs Ref Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Ref Lookup": {
+      "main": [
+        [
+          {
+            "node": "One Item Per Ref",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Head Of Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One Item Per Ref": {
+      "main": [
+        [
+          {
+            "node": "Ref Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ref Issue": {
+      "main": [
+        [
+          {
+            "node": "Refs Closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refs Closed": {
+      "main": [
+        [
+          {
+            "node": "Head Of Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Head Of Chain": {
+      "main": [
+        [
+          {
+            "node": "Claim Build",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Waiting On Blocker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Waiting On Blocker": {
       "main": [
         [
           {
