@@ -170,7 +170,8 @@
         "options": {
           "response": {
             "response": {
-              "responseFormat": "text"
+              "responseFormat": "file",
+              "outputPropertyName": "data"
             }
           }
         }
@@ -529,7 +530,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// GitHub delivery ids exceed 2^53, so parse the raw text and keep ids as strings.\nconst out = [];\n$input.all().forEach((item, i) => {\n  const text = typeof item.json.data === 'string' ? item.json.data : JSON.stringify(item.json);\n  const fixed = text.replace(/\"id\":(\\d{15,})/g, '\"id\":\"$1\"');\n  let list = [];\n  try { list = JSON.parse(fixed); } catch (e) { list = []; }\n  for (const d of (Array.isArray(list) ? list : [])) out.push({ json: d, pairedItem: { item: i } });\n});\nreturn out;"
+        "jsCode": "// GitHub delivery ids exceed 2^53. Read the raw response bytes and keep ids as strings before parsing.\nconst out = [];\nconst items = $input.all();\nfor (let i = 0; i < items.length; i++) {\n  let text = '';\n  try { const buf = await this.helpers.getBinaryDataBuffer(i, 'data'); text = buf.toString('utf8'); }\n  catch (e) { const it = items[i]; if (it.binary && it.binary.data && it.binary.data.data) text = Buffer.from(it.binary.data.data, 'base64').toString('utf8'); else if (typeof it.json.data === 'string') text = it.json.data; }\n  const fixed = text.replace(/\"id\"\\s*:\\s*(\\d{15,})/g, '\"id\":\"$1\"');\n  let list = [];\n  try { list = JSON.parse(fixed); } catch (e) { list = []; }\n  for (const d of (Array.isArray(list) ? list : [])) out.push({ json: d, pairedItem: { item: i } });\n}\nreturn out;"
       }
     }
   ],
