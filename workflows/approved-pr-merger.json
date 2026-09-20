@@ -410,7 +410,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ (() => { const s = $('PR State').item.json; const runs = $('Check Runs').item.json.check_runs || []; const req = Array.isArray($json.contexts) ? $json.contexts : []; const okc = s.cfg.dependabot.ok_conclusions || ['success']; const ok = c => c.status === 'completed' && okc.includes(c.conclusion); if (!s.cfg.dependabot.require_checks) return true; if (req.length) return req.every(name => runs.some(c => c.name === name && ok(c))); return runs.length > 0 && runs.every(ok); })() }}",
+              "leftValue": "={{ (() => { const s = $('PR State').item.json; const runs = $('Check Runs').item.json.check_runs || []; const okc = s.cfg.dependabot.ok_conclusions || ['success']; const ok = c => c.status === 'completed' && okc.includes(c.conclusion); if (!s.cfg.dependabot.require_checks) return true; const protectedReq = Array.isArray($json.contexts) ? $json.contexts : []; const req = protectedReq.length ? protectedReq : (s.cfg.dependabot.checks || []); if (!req.length) return false; return req.every(name => runs.some(c => c.name === name && ok(c))); })() }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -536,7 +536,7 @@
         "color": 4,
         "width": 1700,
         "height": 240,
-        "content": "## Approved PR Merger\n\nMechanics only; every name and policy comes from the config key (`cfg:pipeline`, synced from the org's automation config by the Config Loader).\n\nTwo entry points: the schedule (sweep) and a sub-workflow call from the ingress on an approval event. Human-approved PRs merge when the PR's mergeable state equals `merge.require_state`. Dependency-bot PRs (`dependabot.author`) merge when `dependabot.auto_merge` is on and the branch's required contexts (or all check runs) have an allowed conclusion; the bot submits the approving review itself. Merge method is `merge.method`, head SHA pinned. A failed merge call goes to the error output and is retried next tick. No model call."
+        "content": "## Approved PR Merger\n\nMechanics only; every name and policy comes from the config key (`cfg:pipeline`, synced from the org's automation config by the Config Loader).\n\nTwo entry points: the schedule (sweep) and a sub-workflow call from the ingress on an approval event. Human-approved PRs merge when the PR's mergeable state equals `merge.require_state`. Dependency-bot PRs (`dependabot.author`) merge when `dependabot.auto_merge` is on and the PR is tested: every required status context on the base branch is green, or, when the branch declares none, every check run named in `dependabot.checks` is green. Other jobs never block. The bot submits the approving review itself. Merge method is `merge.method`, head SHA pinned. A failed merge call goes to the error output and is retried next tick. No model call."
       }
     }
   ],
