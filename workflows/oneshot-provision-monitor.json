@@ -1,273 +1,271 @@
-[
-  {
-    "updatedAt": "2026-09-19T19:49:12.685Z",
-    "createdAt": "2026-09-16T00:58:43.517Z",
-    "id": "JphUDyra2G4u2XFd",
-    "name": "OneShot Provision Monitor",
-    "description": "Polls oneshotllc/.github Actions runs every minute and checks oneshot.help reachability, so provisioning activity and logs are visible in n8n. Repointed from oneshotmn in C4 (.github#31).",
-    "active": true,
-    "isArchived": false,
-    "nodes": [
-      {
-        "parameters": {
-          "rule": {
-            "interval": [
-              {
-                "field": "minutes",
-                "minutesInterval": 1
-              }
-            ]
-          }
-        },
-        "id": "66808873-e6aa-4a85-a9ab-c8687e7ca6c4",
-        "name": "Poll Every Minute",
-        "type": "n8n-nodes-base.scheduleTrigger",
-        "typeVersion": 1.3,
-        "position": [
-          0,
-          96
-        ]
-      },
-      {
-        "parameters": {
-          "url": "https://api.github.com/repos/oneshotllc/.github/actions/runs",
-          "authentication": "predefinedCredentialType",
-          "nodeCredentialType": "githubAppApi",
-          "sendQuery": true,
-          "queryParameters": {
-            "parameters": [
-              {
-                "name": "per_page",
-                "value": "15"
-              }
-            ]
-          },
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Accept",
-                "value": "application/vnd.github+json"
-              }
-            ]
-          },
-          "options": {
-            "timeout": 20000
-          }
-        },
-        "id": "8a98a486-371c-48d5-9528-eb9745c57833",
-        "name": "Fetch Workflow Runs",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.5,
-        "position": [
-          224,
-          0
-        ],
-        "credentials": {
-          "githubAppApi": {
-            "id": "ghAppOneshotPr01",
-            "name": "GitHub App - oneshot-pr-bot"
-          }
-        },
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "const runs = $input.first().json.workflow_runs || [];\nconst rows = runs.map(r => ({\n  run_id: r.id,\n  workflow: r.name,\n  status: r.status,\n  conclusion: r.conclusion || 'in_progress',\n  event: r.event,\n  actor: (r.actor && r.actor.login) || 'unknown',\n  branch: r.head_branch,\n  started_at: r.run_started_at,\n  logs_url: r.html_url,\n  running: r.status !== 'completed',\n  failed: r.conclusion === 'failure' || r.conclusion === 'startup_failure'\n}));\nconst running = rows.filter(r => r.running);\nconst failed = rows.filter(r => r.failed);\nreturn [{ json: {\n  checked_at: new Date().toISOString(),\n  total: rows.length,\n  running_count: running.length,\n  failed_count: failed.length,\n  headline: running.length > 0 ? ('RUNNING: ' + running[0].workflow) : (failed.length > 0 ? ('FAILED: ' + failed[0].workflow) : 'idle - all green'),\n  runs: rows\n} }];"
-        },
-        "id": "9568b0ad-d13b-4081-8830-b0ed0a7ca318",
-        "name": "Build Action Log",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          448,
-          0
-        ]
-      },
-      {
-        "parameters": {
-          "mode": "combine",
-          "combineBy": "combineByPosition",
-          "options": {}
-        },
-        "id": "34902d47-b7e4-47da-8ff4-b1f7c84cf54a",
-        "name": "Combine Dashboard",
-        "type": "n8n-nodes-base.merge",
-        "typeVersion": 3.2,
-        "position": [
-          672,
-          96
-        ]
-      },
-      {
-        "parameters": {
-          "url": "https://oneshot.help/",
-          "options": {
-            "redirect": {
-              "redirect": {}
-            },
-            "response": {
-              "response": {
-                "fullResponse": true,
-                "neverError": true
-              }
-            },
-            "timeout": 20000
-          }
-        },
-        "id": "e3e64334-7e55-44e6-a07a-d63657a0f075",
-        "name": "Check Site Health",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.5,
-        "position": [
-          224,
-          192
-        ],
-        "executeOnce": true,
-        "onError": "continueRegularOutput"
-      },
-      {
-        "parameters": {
-          "jsCode": "const r = $input.first().json;\nconst code = r.statusCode || 0;\nconst body = typeof r.body === 'string' ? r.body : '';\nconst isWordPress = body.includes('wp-content') || body.includes('wp-includes');\nreturn [{ json: {\n  site_url: 'https://oneshot.help/',\n  http_status: code,\n  reachable: code >= 200 && code < 400,\n  looks_like_wordpress: isWordPress,\n  checked_at: new Date().toISOString(),\n  note: 'Checked from the n8n host on the Mac Studio, not from a public runner.'\n} }];"
-        },
-        "id": "c4ad4490-cbd7-4d63-a05f-88f6b87c95d8",
-        "name": "Summarize Site Health",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          448,
-          192
-        ]
-      },
-      {
-        "parameters": {
-          "content": "## OneShot Provision Monitor\n\nPolls the org .github repo every minute for Actions runs, and checks whether oneshot.help is serving.\n\nOpen any execution to read the full run log. The `runs` array carries one row per workflow run with a direct `logs_url` into GitHub.\n\nThe site check runs from this Mac, so it is a reachability signal only, not proof a visitor can load the site.",
-          "height": 200,
-          "width": 300,
-          "color": 4
-        },
-        "id": "b80c0b44-6f9b-41b4-b198-ec6663339274",
-        "name": "Sticky Note 3b43df5e",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          -288,
-          -224
-        ]
-      }
-    ],
-    "connections": {
-      "Poll Every Minute": {
-        "main": [
-          [
+{
+  "updatedAt": "2026-09-19T19:49:12.685Z",
+  "createdAt": "2026-09-16T00:58:43.517Z",
+  "id": "JphUDyra2G4u2XFd",
+  "name": "OneShot Provision Monitor",
+  "description": "Polls oneshotllc/.github Actions runs every minute and checks oneshot.help reachability, so provisioning activity and logs are visible in n8n. Repointed from oneshotmn in C4 (.github#31).",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
             {
-              "node": "Fetch Workflow Runs",
-              "type": "main",
-              "index": 0
-            },
-            {
-              "node": "Check Site Health",
-              "type": "main",
-              "index": 0
+              "field": "minutes",
+              "minutesInterval": 1
             }
           ]
-        ]
-      },
-      "Fetch Workflow Runs": {
-        "main": [
-          [
-            {
-              "node": "Build Action Log",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Build Action Log": {
-        "main": [
-          [
-            {
-              "node": "Combine Dashboard",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Check Site Health": {
-        "main": [
-          [
-            {
-              "node": "Summarize Site Health",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Summarize Site Health": {
-        "main": [
-          [
-            {
-              "node": "Combine Dashboard",
-              "type": "main",
-              "index": 1
-            }
-          ]
-        ]
-      }
-    },
-    "settings": {
-      "executionOrder": "v1",
-      "availableInMCP": true,
-      "binaryMode": "separate"
-    },
-    "staticData": {
-      "node:Poll Every Minute": {
-        "recurrenceRules": [
-          null
-        ],
-        "recurrenceRuleSignatures": [
-          null
-        ]
-      }
-    },
-    "meta": {
-      "aiBuilderAssisted": true,
-      "builderVariant": "mcp"
-    },
-    "nodeGroups": [],
-    "pinData": {},
-    "versionId": "4c9cde7d-b24b-4106-a10f-4ff8f3194bdb",
-    "activeVersionId": "4c9cde7d-b24b-4106-a10f-4ff8f3194bdb",
-    "versionCounter": 4,
-    "triggerCount": 1,
-    "sourceWorkflowId": null,
-    "tags": [],
-    "shared": [
-      {
-        "updatedAt": "2026-09-16T00:58:43.519Z",
-        "createdAt": "2026-09-16T00:58:43.519Z",
-        "role": "workflow:owner",
-        "workflowId": "JphUDyra2G4u2XFd",
-        "projectId": "kbxEhpIE8mw6KCCA",
-        "project": {
-          "updatedAt": "2026-09-12T22:56:00.120Z",
-          "createdAt": "2026-08-23T06:40:56.864Z",
-          "id": "kbxEhpIE8mw6KCCA",
-          "name": "oneshotllc",
-          "type": "personal",
-          "icon": null,
-          "description": null,
-          "customTelemetryTags": [],
-          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
         }
-      }
-    ],
-    "versionMetadata": {
-      "name": "C4: repoint Actions poll to oneshotllc/.github",
-      "description": "Updated nodes: Fetch Workflow Runs"
+      },
+      "id": "66808873-e6aa-4a85-a9ab-c8687e7ca6c4",
+      "name": "Poll Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/repos/oneshotllc/.github/actions/runs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "15"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "8a98a486-371c-48d5-9528-eb9745c57833",
+      "name": "Fetch Workflow Runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const runs = $input.first().json.workflow_runs || [];\nconst rows = runs.map(r => ({\n  run_id: r.id,\n  workflow: r.name,\n  status: r.status,\n  conclusion: r.conclusion || 'in_progress',\n  event: r.event,\n  actor: (r.actor && r.actor.login) || 'unknown',\n  branch: r.head_branch,\n  started_at: r.run_started_at,\n  logs_url: r.html_url,\n  running: r.status !== 'completed',\n  failed: r.conclusion === 'failure' || r.conclusion === 'startup_failure'\n}));\nconst running = rows.filter(r => r.running);\nconst failed = rows.filter(r => r.failed);\nreturn [{ json: {\n  checked_at: new Date().toISOString(),\n  total: rows.length,\n  running_count: running.length,\n  failed_count: failed.length,\n  headline: running.length > 0 ? ('RUNNING: ' + running[0].workflow) : (failed.length > 0 ? ('FAILED: ' + failed[0].workflow) : 'idle - all green'),\n  runs: rows\n} }];"
+      },
+      "id": "9568b0ad-d13b-4081-8830-b0ed0a7ca318",
+      "name": "Build Action Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "34902d47-b7e4-47da-8ff4-b1f7c84cf54a",
+      "name": "Combine Dashboard",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        672,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://oneshot.help/",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "e3e64334-7e55-44e6-a07a-d63657a0f075",
+      "name": "Check Site Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $input.first().json;\nconst code = r.statusCode || 0;\nconst body = typeof r.body === 'string' ? r.body : '';\nconst isWordPress = body.includes('wp-content') || body.includes('wp-includes');\nreturn [{ json: {\n  site_url: 'https://oneshot.help/',\n  http_status: code,\n  reachable: code >= 200 && code < 400,\n  looks_like_wordpress: isWordPress,\n  checked_at: new Date().toISOString(),\n  note: 'Checked from the n8n host on the Mac Studio, not from a public runner.'\n} }];"
+      },
+      "id": "c4ad4490-cbd7-4d63-a05f-88f6b87c95d8",
+      "name": "Summarize Site Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## OneShot Provision Monitor\n\nPolls the org .github repo every minute for Actions runs, and checks whether oneshot.help is serving.\n\nOpen any execution to read the full run log. The `runs` array carries one row per workflow run with a direct `logs_url` into GitHub.\n\nThe site check runs from this Mac, so it is a reachability signal only, not proof a visitor can load the site.",
+        "height": 200,
+        "width": 300,
+        "color": 4
+      },
+      "id": "b80c0b44-6f9b-41b4-b198-ec6663339274",
+      "name": "Sticky Note 3b43df5e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -288,
+        -224
+      ]
     }
+  ],
+  "connections": {
+    "Poll Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Fetch Workflow Runs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Site Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Workflow Runs": {
+      "main": [
+        [
+          {
+            "node": "Build Action Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Action Log": {
+      "main": [
+        [
+          {
+            "node": "Combine Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Site Health": {
+      "main": [
+        [
+          {
+            "node": "Summarize Site Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Site Health": {
+      "main": [
+        [
+          {
+            "node": "Combine Dashboard",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": {
+    "node:Poll Every Minute": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "4c9cde7d-b24b-4106-a10f-4ff8f3194bdb",
+  "activeVersionId": "4c9cde7d-b24b-4106-a10f-4ff8f3194bdb",
+  "versionCounter": 4,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-09-16T00:58:43.519Z",
+      "createdAt": "2026-09-16T00:58:43.519Z",
+      "role": "workflow:owner",
+      "workflowId": "JphUDyra2G4u2XFd",
+      "projectId": "kbxEhpIE8mw6KCCA",
+      "project": {
+        "updatedAt": "2026-09-12T22:56:00.120Z",
+        "createdAt": "2026-08-23T06:40:56.864Z",
+        "id": "kbxEhpIE8mw6KCCA",
+        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "C4: repoint Actions poll to oneshotllc/.github",
+    "description": "Updated nodes: Fetch Workflow Runs"
   }
-]
+}

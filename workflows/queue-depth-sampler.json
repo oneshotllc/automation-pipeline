@@ -1,0 +1,300 @@
+[
+  {
+    "updatedAt": "2026-09-20T05:01:18.875Z",
+    "createdAt": "2026-09-20T05:01:18.875Z",
+    "id": "queueDepthSampler1",
+    "name": "Queue Depth Sampler",
+    "description": "C5.5 (#40): every minute record intake/stream/build queue lengths into Redis list metrics:queue-depth (7 days kept). Replaces the launchd sampler.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "28eb7ae9-74d6-40cd-a9cd-1c7a641b6ba3",
+        "name": "Every Minute",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "3b682dc2-2bd6-4559-8790-403f3f161ddf",
+        "name": "Intake",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          220,
+          100
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "intake",
+          "key": "queue:intake",
+          "keyType": "list",
+          "options": {}
+        },
+        "alwaysOutputData": true,
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "32749e67-b80c-4cd6-becf-956329876de4",
+        "name": "Stream",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          220,
+          300
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "stream",
+          "key": "queue:oneshotllc",
+          "keyType": "list",
+          "options": {}
+        },
+        "alwaysOutputData": true,
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "58022c93-558d-4a52-84ae-d83b68bc0667",
+        "name": "Build",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          220,
+          500
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "build",
+          "key": "queue:build:oneshotllc",
+          "keyType": "list",
+          "options": {}
+        },
+        "alwaysOutputData": true,
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "5b809746-5a83-49f6-853b-c3e7bb68cdbe",
+        "name": "Merge Counts",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3.2,
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "mode": "combine",
+          "combineBy": "combineByPosition",
+          "numberInputs": 3
+        }
+      },
+      {
+        "id": "ad5f1e64-9aa7-4371-be99-91e8c014613e",
+        "name": "Sample",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const j=$input.first().json; const len=v=>Array.isArray(v)?v.length:(v?1:0);\nreturn [{json:{line: JSON.stringify({t:new Date().toISOString(), intake:len(j.intake), stream:len(j.stream), build:len(j.build)})}}];"
+        }
+      },
+      {
+        "id": "e0f4cd45-26a4-4e16-b885-372ff6e61e5e",
+        "name": "Append Sample",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          900,
+          300
+        ],
+        "parameters": {
+          "operation": "push",
+          "list": "metrics:queue-depth",
+          "messageData": "={{ $json.line }}",
+          "tail": true
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "2aa4180c-ba39-4965-a236-49ac1710965e",
+        "name": "Notes",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -60
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 1100,
+          "height": 200,
+          "content": "## Queue depth sampler (C5.5, .github#40)\n\nOne sample per minute appended to Redis list `metrics:queue-depth` as JSON `{t,intake,stream,build}`. The report workflow reads it. Nothing outside n8n schedules this. (List length is read with the Redis node's list GET; queues are small by design.)"
+        }
+      }
+    ],
+    "connections": {
+      "Every Minute": {
+        "main": [
+          [
+            {
+              "node": "Intake",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Stream",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Build",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Intake": {
+        "main": [
+          [
+            {
+              "node": "Merge Counts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Stream": {
+        "main": [
+          [
+            {
+              "node": "Merge Counts",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Build": {
+        "main": [
+          [
+            {
+              "node": "Merge Counts",
+              "type": "main",
+              "index": 2
+            }
+          ]
+        ]
+      },
+      "Merge Counts": {
+        "main": [
+          [
+            {
+              "node": "Sample",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Sample": {
+        "main": [
+          [
+            {
+              "node": "Append Sample",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "saveDataSuccessExecution": "none",
+      "saveDataErrorExecution": "all"
+    },
+    "staticData": {
+      "node:Every Minute": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "meta": null,
+    "nodeGroups": [],
+    "pinData": {},
+    "versionId": "82a69df0-57ed-49bd-9f80-dbee257387ed",
+    "activeVersionId": "82a69df0-57ed-49bd-9f80-dbee257387ed",
+    "versionCounter": 1,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-20T05:01:18.877Z",
+        "createdAt": "2026-09-20T05:01:18.877Z",
+        "role": "workflow:owner",
+        "workflowId": "queueDepthSampler1",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]

@@ -1,432 +1,430 @@
-[
-  {
-    "updatedAt": "2026-09-19T20:03:00.363Z",
-    "createdAt": "2026-08-24T07:27:23.333Z",
-    "id": "d59YY3F06IEMKLWh",
-    "name": "GitHub Issue TDD BDD Triage",
-    "description": "GitHub App webhook ingress (C4, .github#31): verifies X-Hub-Signature-256 against cfg:gh_webhook_secret (401 on mismatch), normalizes issues/pull_request events, admits human-actor open items, pushes the poller-shaped item to queue:intake.",
-    "active": true,
-    "isArchived": false,
-    "nodes": [
-      {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "github-issue-triage",
-          "responseMode": "responseNode",
-          "options": {
-            "rawBody": true
-          }
-        },
-        "id": "f5f9f383-d63f-4e27-b383-c2be43147288",
-        "name": "Triage Intake",
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2.1,
-        "position": [
-          0,
-          112
-        ],
-        "webhookId": "f7b28248-24da-4672-8f35-01be6f74c078"
-      },
-      {
-        "id": "231ef67f-1924-4969-a48b-179ce6ca2d75",
-        "name": "Enqueue To Redis Queue",
-        "type": "n8n-nodes-base.redis",
-        "typeVersion": 1,
-        "position": [
-          1540,
-          0
-        ],
-        "parameters": {
-          "list": "queue:intake",
-          "messageData": "={{ $json.payload }}",
-          "operation": "push",
-          "tail": false
-        },
-        "credentials": {
-          "redis": {
-            "id": "redisLocalQueue1",
-            "name": "Redis (local triage queue)"
-          }
+{
+  "updatedAt": "2026-09-19T20:03:00.363Z",
+  "createdAt": "2026-08-24T07:27:23.333Z",
+  "id": "d59YY3F06IEMKLWh",
+  "name": "GitHub Issue TDD BDD Triage",
+  "description": "GitHub App webhook ingress (C4, .github#31): verifies X-Hub-Signature-256 against cfg:gh_webhook_secret (401 on mismatch), normalizes issues/pull_request events, admits human-actor open items, pushes the poller-shaped item to queue:intake.",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-issue-triage",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
         }
       },
-      {
-        "id": "1946af21-4fb1-49cb-9eeb-0f10ef32c739",
-        "name": "Get Webhook Secret",
-        "type": "n8n-nodes-base.redis",
-        "typeVersion": 1,
-        "position": [
-          220,
-          112
-        ],
-        "parameters": {
-          "operation": "get",
-          "propertyName": "secret",
-          "key": "cfg:gh_webhook_secret",
-          "keyType": "string",
-          "options": {}
-        },
-        "credentials": {
-          "redis": {
-            "id": "redisLocalQueue1",
-            "name": "Redis (local triage queue)"
-          }
-        }
+      "id": "f5f9f383-d63f-4e27-b383-c2be43147288",
+      "name": "Triage Intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        112
+      ],
+      "webhookId": "f7b28248-24da-4672-8f35-01be6f74c078"
+    },
+    {
+      "id": "231ef67f-1924-4969-a48b-179ce6ca2d75",
+      "name": "Enqueue To Redis Queue",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "list": "queue:intake",
+        "messageData": "={{ $json.payload }}",
+        "operation": "push",
+        "tail": false
       },
-      {
-        "id": "57333633-7da0-4d39-b7f5-4498eaeec7fc",
-        "name": "Verify Signature",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          440,
-          112
-        ],
-        "parameters": {
-          "mode": "runOnceForEachItem",
-          "language": "javaScript",
-          "jsCode": "// C4 (.github#31): HMAC-SHA256 of the RAW body vs x-hub-signature-256. Fail closed.\nconst crypto = require('crypto');\nconst secret = String($json.secret || '');\nconst hook = $('Triage Intake').item;\nconst headers = hook.json.headers || {};\nconst sent = String(headers['x-hub-signature-256'] || '');\nlet raw = '';\ntry { raw = Buffer.from(hook.binary.data.data, 'base64').toString('utf8'); }\ncatch (e) { raw = typeof hook.json.body === 'string' ? hook.json.body : JSON.stringify(hook.json.body || {}); }\nlet ok = false, why = '';\nif (!secret) why = 'cfg:gh_webhook_secret is not set';\nelse if (!sent.startsWith('sha256=')) why = 'missing or malformed x-hub-signature-256';\nelse {\n  const mine = 'sha256=' + crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('hex');\n  const a = Buffer.from(mine), b = Buffer.from(sent);\n  ok = a.length === b.length && crypto.timingSafeEqual(a, b);\n  if (!ok) why = 'signature mismatch';\n}\nlet body = hook.json.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }\nif (!body || typeof body !== 'object') { try { body = JSON.parse(raw); } catch (e) { body = {}; } }\nreturn { json: { __sig_ok: ok, __sig_why: why, headers, body } };"
-        }
-      },
-      {
-        "id": "3384a06e-8eec-4c7b-86d0-d5c82bcb8b57",
-        "name": "Signature Valid",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          660,
-          112
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "loose"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ $json.__sig_ok }}",
-                "operator": {
-                  "type": "boolean",
-                  "operation": "true",
-                  "singleValue": true
-                }
-              }
-            ],
-            "combinator": "and"
-          }
-        }
-      },
-      {
-        "id": "822f82cd-15e7-4fca-a407-204688d95561",
-        "name": "Respond 401",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          880,
-          300
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "={{ JSON.stringify({ error: 'invalid signature', detail: $json.__sig_why }) }}",
-          "options": {
-            "responseCode": 401
-          }
-        }
-      },
-      {
-        "id": "a8865c8c-9aec-47b7-9a61-596746f1817d",
-        "name": "Normalize GitHub Event",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          880,
-          0
-        ],
-        "parameters": {
-          "mode": "runOnceForEachItem",
-          "language": "javaScript",
-          "jsCode": "// The only node that knows what a GitHub payload looks like. Everything downstream reads this envelope.\nconst headers = $json.headers || {};\nconst b = $json.body || {};\nconst event = String(headers['x-github-event'] || '');\nconst item = b.issue || b.pull_request || {};\nconst repo = b.repository || {};\nconst sender = b.sender || {};\nconst owner = (repo.owner && repo.owner.login) || (repo.full_name || '').split('/')[0] || '';\nconst name = repo.name || (repo.full_name || '').split('/')[1] || '';\nconst actor = sender.login || '';\nconst actorIsBot = sender.type === 'Bot' || /\\[bot\\]$/.test(actor);\nconst labels = (item.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '').filter(Boolean);\nreturn { json: {\n  event, action: String(b.action || ''),\n  repository_owner: owner, repository_name: name, issue_number: Number(item.number || 0),\n  title: item.title == null ? '' : String(item.title), body: item.body == null ? '' : String(item.body),\n  labels, author: (item.user && item.user.login) || '', issue_url: item.html_url || '',\n  issue_state: item.state || '', actor, actor_is_bot: actorIsBot,\n  changed_label: (b.label && b.label.name) || '',\n  delivery_id: 'webhook:' + String(headers['x-github-delivery'] || '') } };"
-        }
-      },
-      {
-        "id": "0669a1aa-4cff-4548-b075-1c30e56f5e2f",
-        "name": "Admit",
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.2,
-        "position": [
-          1100,
-          0
-        ],
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "loose"
-            },
-            "conditions": [
-              {
-                "leftValue": "={{ ['issues','pull_request'].includes($json.event) }}",
-                "operator": {
-                  "type": "boolean",
-                  "operation": "true",
-                  "singleValue": true
-                }
-              },
-              {
-                "leftValue": "={{ ['opened','reopened','edited','labeled','unlabeled','synchronize','ready_for_review'].includes($json.action) }}",
-                "operator": {
-                  "type": "boolean",
-                  "operation": "true",
-                  "singleValue": true
-                }
-              },
-              {
-                "leftValue": "={{ !$json.actor_is_bot || ['opened','reopened'].includes($json.action) }}",
-                "operator": {
-                  "type": "boolean",
-                  "operation": "true",
-                  "singleValue": true
-                }
-              },
-              {
-                "leftValue": "={{ $json.issue_state }}",
-                "operator": {
-                  "type": "string",
-                  "operation": "equals"
-                },
-                "rightValue": "open"
-              },
-              {
-                "leftValue": "={{ $json.issue_number }}",
-                "operator": {
-                  "type": "number",
-                  "operation": "gt"
-                },
-                "rightValue": 0
-              }
-            ],
-            "combinator": "and"
-          }
-        }
-      },
-      {
-        "id": "055bdd78-2f7a-4202-bdd2-4410982bfdc1",
-        "name": "Build Intake Item",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1320,
-          0
-        ],
-        "parameters": {
-          "mode": "runOnceForEachItem",
-          "language": "javaScript",
-          "jsCode": "// Same shape the poller produces, so the sorter and consumer cannot tell the two ingress paths apart.\nconst e = $json;\nconst item = { delivery_id: e.delivery_id, repository_owner: e.repository_owner, repository_name: e.repository_name, issue_number: e.issue_number, title: e.title, body: e.body, labels: e.labels, author: e.author, issue_url: e.issue_url };\nreturn { json: { item, payload: JSON.stringify(item) } };"
-        }
-      },
-      {
-        "id": "a0c11d74-2833-4044-9a18-6ab7633a8640",
-        "name": "Respond 202",
-        "type": "n8n-nodes-base.respondToWebhook",
-        "typeVersion": 1.1,
-        "position": [
-          1760,
-          112
-        ],
-        "parameters": {
-          "respondWith": "json",
-          "responseBody": "{\"accepted\":true}",
-          "options": {
-            "responseCode": 202
-          }
-        }
-      },
-      {
-        "id": "4bbd0f03-bb8d-4767-bf84-1b89ac945c6e",
-        "name": "Dropped",
-        "type": "n8n-nodes-base.noOp",
-        "typeVersion": 1,
-        "position": [
-          1320,
-          200
-        ],
-        "parameters": {}
-      },
-      {
-        "id": "47b72ab9-fa03-4e15-83bb-39c8faad7a3b",
-        "name": "Ingress Notes",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          0,
-          -220
-        ],
-        "parameters": {
-          "color": 4,
-          "width": 1900,
-          "height": 280,
-          "content": "## GitHub App webhook ingress (C4, oneshotllc/.github#31)\n\nApp hook -> Funnel :10000 -> Caddy :8460 (/webhook/* only) -> here. Get Webhook Secret reads cfg:gh_webhook_secret from loopback Redis (rotated with PATCH /app/hook/config; never stored in this workflow or its export). Verify Signature HMACs the raw body and answers 401 on mismatch, fail-closed if the secret is unset.\n\nAdmit: issues/pull_request events, open items, actions opened/reopened/edited/labeled/unlabeled/synchronize/ready_for_review. Bot actors are admitted only for opened/reopened (tickets are created by the bot from chat); bot label edits are dropped so Apply hold Label cannot re-trigger itself. Brian removing hold (unlabeled, human actor) is the fast path to the sorter's approval check.\n\nOutput is the poller's item shape, pushed to queue:intake. The 5-minute poller remains the backstop for missed deliveries; the sorter dedupes both."
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
         }
       }
-    ],
-    "connections": {
-      "Triage Intake": {
-        "main": [
-          [
-            {
-              "node": "Get Webhook Secret",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
+    },
+    {
+      "id": "1946af21-4fb1-49cb-9eeb-0f10ef32c739",
+      "name": "Get Webhook Secret",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        220,
+        112
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "secret",
+        "key": "cfg:gh_webhook_secret",
+        "keyType": "string",
+        "options": {}
       },
-      "Get Webhook Secret": {
-        "main": [
-          [
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "57333633-7da0-4d39-b7f5-4498eaeec7fc",
+      "name": "Verify Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// C4 (.github#31): HMAC-SHA256 of the RAW body vs x-hub-signature-256. Fail closed.\nconst crypto = require('crypto');\nconst secret = String($json.secret || '');\nconst hook = $('Triage Intake').item;\nconst headers = hook.json.headers || {};\nconst sent = String(headers['x-hub-signature-256'] || '');\nlet raw = '';\ntry { raw = Buffer.from(hook.binary.data.data, 'base64').toString('utf8'); }\ncatch (e) { raw = typeof hook.json.body === 'string' ? hook.json.body : JSON.stringify(hook.json.body || {}); }\nlet ok = false, why = '';\nif (!secret) why = 'cfg:gh_webhook_secret is not set';\nelse if (!sent.startsWith('sha256=')) why = 'missing or malformed x-hub-signature-256';\nelse {\n  const mine = 'sha256=' + crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('hex');\n  const a = Buffer.from(mine), b = Buffer.from(sent);\n  ok = a.length === b.length && crypto.timingSafeEqual(a, b);\n  if (!ok) why = 'signature mismatch';\n}\nlet body = hook.json.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }\nif (!body || typeof body !== 'object') { try { body = JSON.parse(raw); } catch (e) { body = {}; } }\nreturn { json: { __sig_ok: ok, __sig_why: why, headers, body } };"
+      }
+    },
+    {
+      "id": "3384a06e-8eec-4c7b-86d0-d5c82bcb8b57",
+      "name": "Signature Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        112
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
             {
-              "node": "Verify Signature",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Verify Signature": {
-        "main": [
-          [
-            {
-              "node": "Signature Valid",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Signature Valid": {
-        "main": [
-          [
-            {
-              "node": "Normalize GitHub Event",
-              "type": "main",
-              "index": 0
+              "leftValue": "={{ $json.__sig_ok }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
-          [
-            {
-              "node": "Respond 401",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Normalize GitHub Event": {
-        "main": [
-          [
-            {
-              "node": "Admit",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Admit": {
-        "main": [
-          [
-            {
-              "node": "Build Intake Item",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Dropped",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Build Intake Item": {
-        "main": [
-          [
-            {
-              "node": "Enqueue To Redis Queue",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Enqueue To Redis Queue": {
-        "main": [
-          [
-            {
-              "node": "Respond 202",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Dropped": {
-        "main": [
-          [
-            {
-              "node": "Respond 202",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "settings": {
-      "executionOrder": "v1",
-      "availableInMCP": true,
-      "binaryMode": "separate"
-    },
-    "staticData": null,
-    "meta": {
-      "aiBuilderAssisted": true,
-      "builderVariant": "mcp"
-    },
-    "nodeGroups": [],
-    "pinData": {},
-    "versionId": "7a9cbb15-8113-4078-8ea8-a67cccf8e3b4",
-    "activeVersionId": "7a9cbb15-8113-4078-8ea8-a67cccf8e3b4",
-    "versionCounter": 12,
-    "triggerCount": 1,
-    "sourceWorkflowId": null,
-    "tags": [],
-    "shared": [
-      {
-        "updatedAt": "2026-08-24T07:27:23.334Z",
-        "createdAt": "2026-08-24T07:27:23.334Z",
-        "role": "workflow:owner",
-        "workflowId": "d59YY3F06IEMKLWh",
-        "projectId": "kbxEhpIE8mw6KCCA",
-        "project": {
-          "updatedAt": "2026-09-12T22:56:00.120Z",
-          "createdAt": "2026-08-23T06:40:56.864Z",
-          "id": "kbxEhpIE8mw6KCCA",
-          "name": "oneshotllc",
-          "type": "personal",
-          "icon": null,
-          "description": null,
-          "customTelemetryTags": [],
-          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+          "combinator": "and"
         }
       }
-    ],
-    "versionMetadata": {
-      "name": "C4: admit bot-created issues on opened/reopened; ingress notes",
-      "description": "Added nodes: Ingress Notes\nUpdated nodes: Admit"
+    },
+    {
+      "id": "822f82cd-15e7-4fca-a407-204688d95561",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'invalid signature', detail: $json.__sig_why }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "a8865c8c-9aec-47b7-9a61-596746f1817d",
+      "name": "Normalize GitHub Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// The only node that knows what a GitHub payload looks like. Everything downstream reads this envelope.\nconst headers = $json.headers || {};\nconst b = $json.body || {};\nconst event = String(headers['x-github-event'] || '');\nconst item = b.issue || b.pull_request || {};\nconst repo = b.repository || {};\nconst sender = b.sender || {};\nconst owner = (repo.owner && repo.owner.login) || (repo.full_name || '').split('/')[0] || '';\nconst name = repo.name || (repo.full_name || '').split('/')[1] || '';\nconst actor = sender.login || '';\nconst actorIsBot = sender.type === 'Bot' || /\\[bot\\]$/.test(actor);\nconst labels = (item.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '').filter(Boolean);\nreturn { json: {\n  event, action: String(b.action || ''),\n  repository_owner: owner, repository_name: name, issue_number: Number(item.number || 0),\n  title: item.title == null ? '' : String(item.title), body: item.body == null ? '' : String(item.body),\n  labels, author: (item.user && item.user.login) || '', issue_url: item.html_url || '',\n  issue_state: item.state || '', actor, actor_is_bot: actorIsBot,\n  changed_label: (b.label && b.label.name) || '',\n  delivery_id: 'webhook:' + String(headers['x-github-delivery'] || '') } };"
+      }
+    },
+    {
+      "id": "0669a1aa-4cff-4548-b075-1c30e56f5e2f",
+      "name": "Admit",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ['issues','pull_request'].includes($json.event) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ ['opened','reopened','edited','labeled','unlabeled','synchronize','ready_for_review'].includes($json.action) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ !$json.actor_is_bot || ['opened','reopened'].includes($json.action) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.issue_state }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "open"
+            },
+            {
+              "leftValue": "={{ $json.issue_number }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "055bdd78-2f7a-4202-bdd2-4410982bfdc1",
+      "name": "Build Intake Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Same shape the poller produces, so the sorter and consumer cannot tell the two ingress paths apart.\nconst e = $json;\nconst item = { delivery_id: e.delivery_id, repository_owner: e.repository_owner, repository_name: e.repository_name, issue_number: e.issue_number, title: e.title, body: e.body, labels: e.labels, author: e.author, issue_url: e.issue_url };\nreturn { json: { item, payload: JSON.stringify(item) } };"
+      }
+    },
+    {
+      "id": "a0c11d74-2833-4044-9a18-6ab7633a8640",
+      "name": "Respond 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        112
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"accepted\":true}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "4bbd0f03-bb8d-4767-bf84-1b89ac945c6e",
+      "name": "Dropped",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "47b72ab9-fa03-4e15-83bb-39c8faad7a3b",
+      "name": "Ingress Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -220
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 1900,
+        "height": 280,
+        "content": "## GitHub App webhook ingress (C4, oneshotllc/.github#31)\n\nApp hook -> Funnel :10000 -> Caddy :8460 (/webhook/* only) -> here. Get Webhook Secret reads cfg:gh_webhook_secret from loopback Redis (rotated with PATCH /app/hook/config; never stored in this workflow or its export). Verify Signature HMACs the raw body and answers 401 on mismatch, fail-closed if the secret is unset.\n\nAdmit: issues/pull_request events, open items, actions opened/reopened/edited/labeled/unlabeled/synchronize/ready_for_review. Bot actors are admitted only for opened/reopened (tickets are created by the bot from chat); bot label edits are dropped so Apply hold Label cannot re-trigger itself. Brian removing hold (unlabeled, human actor) is the fast path to the sorter's approval check.\n\nOutput is the poller's item shape, pushed to queue:intake. The 5-minute poller remains the backstop for missed deliveries; the sorter dedupes both."
+      }
     }
+  ],
+  "connections": {
+    "Triage Intake": {
+      "main": [
+        [
+          {
+            "node": "Get Webhook Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Webhook Secret": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [
+          {
+            "node": "Signature Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid": {
+      "main": [
+        [
+          {
+            "node": "Normalize GitHub Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize GitHub Event": {
+      "main": [
+        [
+          {
+            "node": "Admit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Admit": {
+      "main": [
+        [
+          {
+            "node": "Build Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dropped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Intake Item": {
+      "main": [
+        [
+          {
+            "node": "Enqueue To Redis Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enqueue To Redis Queue": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dropped": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "7a9cbb15-8113-4078-8ea8-a67cccf8e3b4",
+  "activeVersionId": "7a9cbb15-8113-4078-8ea8-a67cccf8e3b4",
+  "versionCounter": 12,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-08-24T07:27:23.334Z",
+      "createdAt": "2026-08-24T07:27:23.334Z",
+      "role": "workflow:owner",
+      "workflowId": "d59YY3F06IEMKLWh",
+      "projectId": "kbxEhpIE8mw6KCCA",
+      "project": {
+        "updatedAt": "2026-09-12T22:56:00.120Z",
+        "createdAt": "2026-08-23T06:40:56.864Z",
+        "id": "kbxEhpIE8mw6KCCA",
+        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "C4: admit bot-created issues on opened/reopened; ingress notes",
+    "description": "Added nodes: Ingress Notes\nUpdated nodes: Admit"
   }
-]
+}

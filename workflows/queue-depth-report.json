@@ -1,0 +1,187 @@
+[
+  {
+    "updatedAt": "2026-09-20T05:01:18.878Z",
+    "createdAt": "2026-09-20T05:01:18.878Z",
+    "id": "queueDepthReport01",
+    "name": "Queue Depth Report (24h → .github#29)",
+    "description": "C5.5 (#40): once a day summarize metrics:queue-depth for the last 24 h and comment it on oneshotllc/.github#29 (C2 flat-queue evidence). Replaces the launchd report job.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "f2897221-85f2-494a-9c90-f3241f515c98",
+        "name": "Daily 14:30 CT",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "30 14 * * *"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "5b69f6b6-2332-42d0-8014-d42d4dfc67b6",
+        "name": "Read Samples",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          220,
+          200
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "samples",
+          "key": "metrics:queue-depth",
+          "keyType": "list",
+          "options": {}
+        },
+        "alwaysOutputData": true,
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "b7bb648d-8d0b-4005-a1f6-b398ef96bcc6",
+        "name": "Summarize 24h",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          200
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const raw=$input.first().json.samples||[]; const since=Date.now()-24*3600*1000;\nconst rows=raw.map(s=>{try{return JSON.parse(s)}catch(e){return null}}).filter(r=>r&&Date.parse(r.t)>=since);\nif(!rows.length) return [{json:{body:'No queue-depth samples in the last 24 h.'}}];\nconst mx=k=>Math.max(...rows.map(r=>r[k]||0)); const mean=k=>(rows.reduce((a,r)=>a+(r[k]||0),0)/rows.length).toFixed(1);\nconst every=rows.filter((r,i)=>i%30===0).map(r=>`${r.t.slice(11,16)} ${String(r.intake).padStart(3)} ${String(r.stream).padStart(3)} ${String(r.build).padStart(3)}`).join('\\n');\nconst body=`**stage:** C2 24 h flat-queue evidence · **by:** n8n workflow \\\"Queue Depth Report\\\" · **when:** ${new Date().toISOString()}\\n\\n\\`\\`\\`\\nsamples: ${rows.length} (${rows[0].t} .. ${rows[rows.length-1].t})\\nqueue:intake      max ${mx('intake')}  mean ${mean('intake')}\\nqueue:oneshotllc  max ${mx('stream')}  mean ${mean('stream')}\\nqueue:build       max ${mx('build')}  mean ${mean('build')}\\n\\nevery 30th sample (utc intake stream build):\\n${every}\\n\\`\\`\\`\\nSource: Redis list metrics:queue-depth, written by the n8n \\\"Queue Depth Sampler\\\" every minute.`;\nreturn [{json:{body}}];"
+        }
+      },
+      {
+        "id": "715bac34-4de9-49a3-8511-bb1cd8c5c085",
+        "name": "Comment On #29",
+        "type": "n8n-nodes-base.github",
+        "typeVersion": 1.1,
+        "position": [
+          660,
+          200
+        ],
+        "parameters": {
+          "authentication": "githubAppApi",
+          "resource": "issue",
+          "operation": "createComment",
+          "owner": {
+            "__rl": true,
+            "mode": "name",
+            "value": "oneshotllc"
+          },
+          "repository": {
+            "__rl": true,
+            "mode": "name",
+            "value": ".github"
+          },
+          "issueNumber": 29,
+          "body": "={{ $json.body }}"
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Daily 14:30 CT": {
+        "main": [
+          [
+            {
+              "node": "Read Samples",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read Samples": {
+        "main": [
+          [
+            {
+              "node": "Summarize 24h",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Summarize 24h": {
+        "main": [
+          [
+            {
+              "node": "Comment On #29",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true
+    },
+    "staticData": {
+      "node:Daily 14:30 CT": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "meta": null,
+    "nodeGroups": [],
+    "pinData": {},
+    "versionId": "f371af18-aa27-4107-b108-1cba0b53f91c",
+    "activeVersionId": "f371af18-aa27-4107-b108-1cba0b53f91c",
+    "versionCounter": 1,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-20T05:01:18.879Z",
+        "createdAt": "2026-09-20T05:01:18.879Z",
+        "role": "workflow:owner",
+        "workflowId": "queueDepthReport01",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]
