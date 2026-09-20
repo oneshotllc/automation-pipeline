@@ -142,7 +142,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// The only node that knows what a GitHub payload looks like. Everything downstream reads this envelope.\nconst cfg = $('Config').first().json;\nconst headers = $json.headers || {};\nconst b = $json.body || {};\nconst event = String(headers['x-github-event'] || '');\nconst item = b.issue || b.pull_request || {};\nconst repo = b.repository || {};\nconst sender = b.sender || {};\nconst owner = (repo.owner && repo.owner.login) || (repo.full_name || '').split('/')[0] || '';\nconst name = repo.name || (repo.full_name || '').split('/')[1] || '';\nconst actor = sender.login || '';\nconst actorIsBot = sender.type === 'Bot' || /\\[bot\\]$/.test(actor) || (cfg.bots || []).includes(actor);\nconst labels = (item.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '').filter(Boolean);\nconst review = b.review || {};\nconst reviewer = (review.user && review.user.login) || '';\nreturn { json: {\n  event, action: String(b.action || ''),\n  repository_owner: owner, repository_name: name, issue_number: Number(item.number || 0),\n  title: item.title == null ? '' : String(item.title), body: item.body == null ? '' : String(item.body),\n  labels, author: (item.user && item.user.login) || '', issue_url: item.html_url || '',\n  issue_state: item.state || '', actor, actor_is_bot: actorIsBot,\n  changed_label: (b.label && b.label.name) || '',\n  review_state: String(review.state || '').toLowerCase(), reviewer,\n  reviewer_is_approver: (cfg.approvers || []).includes(reviewer),\n  admitted_event: (cfg.ingress.events || []).includes(event),\n  delivery_id: 'webhook:' + String(headers['x-github-delivery'] || '') } };"
+        "jsCode": "// The only node that knows what a GitHub payload looks like. Everything downstream reads this envelope.\nconst cfg = $('Config').first().json;\nconst headers = $json.headers || {};\nconst b = $json.body || {};\nconst event = String(headers['x-github-event'] || '');\nconst item = b.issue || b.pull_request || {};\nconst repo = b.repository || {};\nconst sender = b.sender || {};\nconst owner = (repo.owner && repo.owner.login) || (repo.full_name || '').split('/')[0] || '';\nconst name = repo.name || (repo.full_name || '').split('/')[1] || '';\nconst actor = sender.login || '';\nconst actorIsBot = sender.type === 'Bot' || /\\[bot\\]$/.test(actor) || (cfg.bots || []).includes(actor);\nconst labels = (item.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '').filter(Boolean);\nconst review = b.review || {};\nconst comment = b.comment || {};\nconst reviewer = (review.user && review.user.login) || (comment.user && comment.user.login) || '';\nconst pr = b.pull_request || {};\nconst headRef = (pr.head && pr.head.ref) || '';\nconst prefix = String((cfg.build && cfg.build.branch_prefix) || '');\nconst pipelineBranch = prefix && headRef.startsWith(prefix);\nconst linkedIssue = pipelineBranch ? Number(headRef.slice(prefix.length)) || 0 : 0;\nreturn { json: {\n  event, action: String(b.action || ''),\n  repository_owner: owner, repository_name: name, issue_number: Number(item.number || 0),\n  title: item.title == null ? '' : String(item.title), body: item.body == null ? '' : String(item.body),\n  labels, author: (item.user && item.user.login) || '', issue_url: item.html_url || '',\n  issue_state: item.state || '', actor, actor_is_bot: actorIsBot,\n  changed_label: (b.label && b.label.name) || '',\n  review_state: String(review.state || '').toLowerCase(), review_body: String(review.body || comment.body || ''), review_id: String(review.id || comment.id || ''), reviewer,\n  reviewer_is_approver: (cfg.approvers || []).includes(reviewer),\n  pr_merged: pr.merged === true, head_ref: headRef, pipeline_branch: pipelineBranch, linked_issue: linkedIssue,\n  admitted_event: (cfg.ingress.events || []).includes(event),\n  delivery_id: 'webhook:' + String(headers['x-github-delivery'] || '') } };"
       }
     },
     {
@@ -171,7 +171,7 @@
               }
             },
             {
-              "leftValue": "={{ ['opened','reopened','edited','labeled','unlabeled','synchronize','ready_for_review','submitted','created'].includes($json.action) }}",
+              "leftValue": "={{ ['opened','reopened','edited','labeled','unlabeled','synchronize','ready_for_review','submitted','created','closed'].includes($json.action) }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -179,20 +179,12 @@
               }
             },
             {
-              "leftValue": "={{ !$json.actor_is_bot || ['opened','reopened'].includes($json.action) }}",
+              "leftValue": "={{ !$json.actor_is_bot || ['opened','reopened','closed'].includes($json.action) }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
                 "singleValue": true
               }
-            },
-            {
-              "leftValue": "={{ $json.issue_state }}",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              },
-              "rightValue": "open"
             },
             {
               "leftValue": "={{ $json.issue_number }}",
@@ -263,7 +255,7 @@
         "color": 4,
         "width": 1900,
         "height": 280,
-        "content": "## Webhook Ingress\n\nMechanics only; names come from the config key. The webhook secret is read from the configured Redis key at request time and is never stored in this workflow.\n\nVerify the HMAC signature of the raw body (401 on mismatch, fail-closed when the secret is unset). Normalize the GitHub payload into the intake envelope. Admit only configured events on open items; bot actors are admitted for opened/reopened only so the pipeline's own label edits cannot loop. An approving review by a configured approver calls the merger immediately; everything else admitted is pushed to the intake queue in the poller's item shape, so the sorter and consumer cannot tell the two ingress paths apart."
+        "content": "## Webhook Ingress\n\nMechanics only; names come from the config key. The webhook secret is read from the configured Redis key at request time and is never stored in this workflow.\n\nVerify the HMAC signature of the raw body (401 on mismatch, fail-closed when the secret is unset). Normalize the GitHub payload into the intake envelope. Admit only configured events; bot actors are admitted for opened/reopened/closed only so the pipeline's own label edits cannot loop.\n\nRouting after admission, in order: a merged pull request on a pipeline branch labels its issue shipped; review feedback from a configured approver on a pipeline PR becomes a feedback item on the intake queue (stage feedback, targeting the issue; the sorter sends it straight to the build queue); an approving review by an approver calls the merger immediately; everything else is pushed to the intake queue in the poller's item shape."
       }
     },
     {
@@ -372,6 +364,120 @@
         "language": "javaScript",
         "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
       }
+    },
+    {
+      "id": "718adc26-ec6d-4e60-b685-d54251cd97c2",
+      "name": "Is Merged Pipeline PR",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.event === 'pull_request' && $json.action === 'closed' && $json.pr_merged && $json.pipeline_branch && $json.linked_issue > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "7b22303a-8d6b-49b8-a49f-b219d81c7c41",
+      "name": "Label Issue Shipped",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repository_owner }}/{{ $json.repository_name }}/issues/{{ $json.linked_issue }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: [ $('Config').first().json.labels.shipped ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "bcbe264a-2f0b-45f7-b30e-a92dd939b20a",
+      "name": "Is Review Feedback",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const cfg = $('Config').first().json; const states = (cfg.feedback && cfg.feedback.review_states) || []; const isReview = $json.event === 'pull_request_review' && states.includes($json.review_state) && $json.review_body.trim().length > 0; const isComment = $json.event === 'pull_request_review_comment' && $json.action === 'created'; return $json.pipeline_branch && $json.linked_issue > 0 && $json.reviewer_is_approver && (isReview || isComment); })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "053af689-bcf0-42cf-b4fa-d5e27fe142ad",
+      "name": "Build Feedback Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -140
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// A feedback item targets the ISSUE the PR was built for; the branch is derived from it downstream.\nconst e = $json;\nconst item = { delivery_id: e.delivery_id, repository_owner: e.repository_owner, repository_name: e.repository_name, issue_number: e.linked_issue, pr_number: e.issue_number, stage: 'feedback', feedback_id: e.review_id, title: e.title, body: '', labels: [], author: e.reviewer, issue_url: e.issue_url };\nreturn { json: { item, payload: JSON.stringify(item) } };"
+      }
     }
   ],
   "connections": {
@@ -430,7 +536,7 @@
       "main": [
         [
           {
-            "node": "Is Approval",
+            "node": "Is Merged Pipeline PR",
             "type": "main",
             "index": 0
           }
@@ -544,6 +650,64 @@
         [
           {
             "node": "Get Webhook Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Merged Pipeline PR": {
+      "main": [
+        [
+          {
+            "node": "Label Issue Shipped",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Review Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Issue Shipped": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Review Feedback": {
+      "main": [
+        [
+          {
+            "node": "Build Feedback Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Feedback Item": {
+      "main": [
+        [
+          {
+            "node": "Enqueue To Redis Queue",
             "type": "main",
             "index": 0
           }

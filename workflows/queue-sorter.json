@@ -109,7 +109,7 @@
       "parameters": {
         "operation": "get",
         "propertyName": "seen",
-        "key": "={{ $('Config').first().json.keys.seen_prefix }}{{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }}",
+        "key": "={{ $('Config').first().json.keys.seen_prefix }}{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}#{{ $('Pop Intake Item').item.json.item.issue_number }}",
         "keyType": "string",
         "options": {}
       },
@@ -634,6 +634,172 @@
         -160
       ],
       "parameters": {}
+    },
+    {
+      "id": "b1a41a26-4dd8-4a76-a00d-b5915842b63c",
+      "name": "Classify Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        60
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Feedback items skip triage and go straight to the build queue; pull requests authored by a configured bot on a pipeline branch are never triaged.\nconst cfg = $('Config').first().json;\nconst it = $json.item || {};\nconst isFeedback = it.stage === 'feedback';\nconst isPR = /\\/pull\\/\\d+/.test(String(it.issue_url || ''));\nconst botPR = isPR && (cfg.bots || []).includes(String(it.author || ''));\nconst key = `${it.repository_owner}/${it.repository_name}#${it.issue_number}`;\nreturn { json: { item: it, key, isFeedback, drop: botPR && !isFeedback, feedback_claim: isFeedback ? `${cfg.feedback.claim_prefix}${key}@${it.feedback_id || ''}` : '' } };"
+      }
+    },
+    {
+      "id": "40848b9e-c406-4544-ba25-d057cfcc607e",
+      "name": "Route Kind",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        900,
+        60
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "feedback",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.isFeedback }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "drop",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.drop }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "triage"
+        }
+      }
+    },
+    {
+      "id": "5946a798-7a22-4b01-978c-834303117e77",
+      "name": "Claim Feedback",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -220
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ $json.feedback_claim }}",
+        "expire": true,
+        "ttl": 604800
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "82f8b447-cd06-4c5e-b04a-d4dc7b946e3a",
+      "name": "First Feedback Claim",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Object.values($json)[0] }}",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              },
+              "rightValue": 1
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "aaddae52-6192-40b7-ba23-504578bdb4f1",
+      "name": "Feedback Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -220
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of ((cfg.streams && cfg.streams.rules) || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = (cfg.streams && cfg.streams.default) || null;\nif (!stream) throw new Error(`sorter: no stream for ${full}`);\nconst item = Object.assign({}, src, { stream });\nreturn { json: { stream, list: cfg.queues.build_prefix + stream, payload: JSON.stringify(item) } };"
+      }
+    },
+    {
+      "id": "6674fb01-161c-45dc-a4ff-0fbb5de6f1c1",
+      "name": "Push Feedback To Build Queue",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        -220
+      ],
+      "parameters": {
+        "operation": "push",
+        "list": "={{ $json.list }}",
+        "messageData": "={{ $json.payload }}",
+        "tail": false
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
     }
   ],
   "connections": {
@@ -652,7 +818,7 @@
       "main": [
         [
           {
-            "node": "Check Seen",
+            "node": "Classify Item",
             "type": "main",
             "index": 0
           }
@@ -962,6 +1128,93 @@
       ]
     },
     "Waiting On Blocker": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Item": {
+      "main": [
+        [
+          {
+            "node": "Route Kind",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Kind": {
+      "main": [
+        [
+          {
+            "node": "Claim Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drop Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Seen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Feedback": {
+      "main": [
+        [
+          {
+            "node": "First Feedback Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Feedback Claim": {
+      "main": [
+        [
+          {
+            "node": "Feedback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drop Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feedback Payload": {
+      "main": [
+        [
+          {
+            "node": "Push Feedback To Build Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Feedback To Build Queue": {
       "main": [
         [
           {

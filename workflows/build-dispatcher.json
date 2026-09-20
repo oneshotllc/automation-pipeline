@@ -154,7 +154,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "const cfg = $('Config').first().json;\nconst it = $json.item;\nconst repo = `${it.repository_owner}/${it.repository_name}`;\nconst branch = cfg.build.branch_prefix + it.issue_number;\nreturn { json: { repo, owner: it.repository_owner, name: it.repository_name, issue: it.issue_number, branch,\n  dispatch_repo: cfg.build.dispatch_repo, workflow_file: cfg.build.workflow_file, ref: cfg.build.ref,\n  inputs: { repo, issue: String(it.issue_number), branch, hold_label: cfg.labels.hold, pr_open_label: cfg.labels.pr_open, reviewers: (cfg.approvers || []).join(','), runner_label: cfg.build.runner_label, spec_sentinel: cfg.spec.sentinel, agent: cfg.build.agent } } };"
+        "jsCode": "const cfg = $('Config').first().json;\nconst it = $json.item;\nconst repo = `${it.repository_owner}/${it.repository_name}`;\nconst branch = cfg.build.branch_prefix + it.issue_number;\nconst mode = it.stage === 'feedback' ? 'feedback' : 'build';\nreturn { json: { repo, owner: it.repository_owner, name: it.repository_name, issue: it.issue_number, branch, mode,\n  dispatch_repo: cfg.build.dispatch_repo, workflow_file: cfg.build.workflow_file, ref: cfg.build.ref,\n  inputs: { repo, issue: String(it.issue_number), branch, hold_label: cfg.labels.hold, pr_open_label: cfg.labels.pr_open, reviewers: (cfg.approvers || []).join(','), runner_label: cfg.build.runner_label, spec_sentinel: cfg.spec.sentinel, agent: cfg.build.agent, mode } } };"
       }
     },
     {
@@ -201,7 +201,7 @@
     },
     {
       "id": "6714c4f8-b0c1-46f0-830d-0b2d2228d10e",
-      "name": "No Open PR Yet",
+      "name": "PR State Matches Mode",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -217,7 +217,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ Array.isArray($json.body) && $json.body.length === 0 }}",
+              "leftValue": "={{ $('Dispatch Inputs').item.json.mode === 'feedback' ? (Array.isArray($json.body) && $json.body.length > 0) : (Array.isArray($json.body) && $json.body.length === 0) }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -298,7 +298,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ body: 'Build dispatched on branch `' + $('Dispatch Inputs').item.json.branch + '`. The build run reports back here when it opens the pull request or fails.' }) }}",
+        "jsonBody": "={{ JSON.stringify({ body: ($('Dispatch Inputs').item.json.mode === 'feedback' ? 'Feedback build dispatched on branch `' : 'Build dispatched on branch `') + $('Dispatch Inputs').item.json.branch + '`. The run reports back when it finishes.' }) }}",
         "options": {}
       },
       "credentials": {
@@ -310,7 +310,7 @@
     },
     {
       "id": "680003d6-a1ab-412f-94c9-12c6aeac6483",
-      "name": "PR Already Open",
+      "name": "Wrong PR State For Mode",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
@@ -332,7 +332,7 @@
         "color": 4,
         "width": 1400,
         "height": 200,
-        "content": "## Build Dispatcher\n\nMechanics only; names come from the config key. Each tick: one pop per configured stream's build queue. The branch is a pure function of the issue (`build.branch_prefix` + number); if an open PR already exists on it, the item is dropped. Otherwise the configured build workflow is dispatched in the configured repository with every value it needs as inputs (repository, issue, branch, labels, reviewers, runner label, spec sentinel), and a note is left on the issue. The build run itself re-reads approval before writing anything."
+        "content": "## Build Dispatcher\n\nMechanics only; names come from the config key. Each tick: one pop per configured stream's build queue. The branch is a pure function of the issue (`build.branch_prefix` + number). Mode `build` requires that no open PR exists on that branch; mode `feedback` (review comments on a pipeline PR) requires that one does. The configured build workflow is dispatched in the configured repository with every value it needs as inputs, a note is left on the issue, and a failed dispatch call puts the item back on the queue. The build run itself re-reads approval before writing anything."
       }
     },
     {
@@ -461,25 +461,7 @@
       "main": [
         [
           {
-            "node": "No Open PR Yet",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "No Open PR Yet": {
-      "main": [
-        [
-          {
-            "node": "Dispatch Build",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "PR Already Open",
+            "node": "PR State Matches Mode",
             "type": "main",
             "index": 0
           }
@@ -509,6 +491,24 @@
         [
           {
             "node": "Dispatch Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PR State Matches Mode": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Build",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wrong PR State For Mode",
             "type": "main",
             "index": 0
           }
