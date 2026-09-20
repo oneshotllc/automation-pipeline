@@ -1,0 +1,370 @@
+[
+  {
+    "updatedAt": "2026-09-20T05:26:28.410Z",
+    "createdAt": "2026-09-20T05:26:28.410Z",
+    "id": "approvedPrMerger01",
+    "name": "Approved PR Merger",
+    "description": "C8 merge stage, brought forward 2026-09-20 (.github#35): every 5 min find open PRs in oneshotllc that Brian approved and that GitHub reports mergeable_state=clean, and squash-merge them as the bot. Deterministic; no model call.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "bbcd075b-3293-4a7b-9c25-b9ae5c6041a4",
+        "name": "Every 5 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 5
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "ba9cc7b0-aacb-4808-bc0e-3430821e17c3",
+        "name": "Find Approved Open PRs",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          220,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.github.com/search/issues?q=org%3Aoneshotllc+is%3Apr+is%3Aopen+review%3Aapproved&per_page=50",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "0bfc6401-06f3-46aa-9c72-2d49b11ac4b0",
+        "name": "One Item Per PR",
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [
+          440,
+          200
+        ],
+        "parameters": {
+          "fieldToSplitOut": "items",
+          "options": {}
+        }
+      },
+      {
+        "id": "9eb6844a-9e82-4d11-bbef-b0aadc13a1c4",
+        "name": "Derive Coordinates",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          200
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "language": "javaScript",
+          "jsCode": "const m=String($json.repository_url||'').match(/repos\\/([^/]+)\\/([^/]+)$/);\nreturn {json:{owner:m?m[1]:'',repo:m?m[2]:'',number:$json.number,title:$json.title,html_url:$json.html_url}};"
+        }
+      },
+      {
+        "id": "2da71117-add9-461d-9aa1-9326a1450869",
+        "name": "Get PR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/pulls/{{ $json.number }}",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "756473d5-bb8c-4729-b2aa-149f024109c4",
+        "name": "Clean And Approved",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1100,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.mergeable_state }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                },
+                "rightValue": "clean"
+              },
+              {
+                "leftValue": "={{ $json.draft }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false",
+                  "singleValue": true
+                }
+              },
+              {
+                "leftValue": "={{ $json.state }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                },
+                "rightValue": "open"
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "3d49effb-a7bc-4265-9f23-be69aa0ecc23",
+        "name": "Squash Merge",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1320,
+          100
+        ],
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://api.github.com/repos/{{ $json.base.repo.owner.login }}/{{ $json.base.repo.name }}/pulls/{{ $json.number }}/merge",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {},
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ merge_method: 'squash', sha: $json.head.sha, commit_title: $json.title + ' (#' + $json.number + ')' }) }}"
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "392817c5-0e07-4e6e-aae5-f3e8aeb70d5a",
+        "name": "Not Ready",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1320,
+          320
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "f3f465c9-d82c-4be0-8e16-cb47e20ac2b8",
+        "name": "Notes",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -80
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 1500,
+          "height": 220,
+          "content": "## Approved PR Merger (C8 merge stage, .github#35; brought forward on Brian's request 2026-09-20)\n\nBrian's approval is the merge trigger (HumanApprovalGate@PR). Every 5 min: GitHub search `org:oneshotllc is:pr is:open review:approved` → fetch each PR → merge only when GitHub says `mergeable_state == clean` (required reviews + required checks satisfied, no conflicts, not draft) → squash-merge as oneshot-pr-bot with the head SHA pinned, so a push after approval cannot be merged unreviewed. Anything not clean is skipped this tick and retried next tick. A failed merge call is an error execution. No model call. Supersedes the per-repo `merge-sweep` cron workflows (.github#38)."
+        }
+      }
+    ],
+    "connections": {
+      "Every 5 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Find Approved Open PRs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Approved Open PRs": {
+        "main": [
+          [
+            {
+              "node": "One Item Per PR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "One Item Per PR": {
+        "main": [
+          [
+            {
+              "node": "Derive Coordinates",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Derive Coordinates": {
+        "main": [
+          [
+            {
+              "node": "Get PR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get PR": {
+        "main": [
+          [
+            {
+              "node": "Clean And Approved",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Clean And Approved": {
+        "main": [
+          [
+            {
+              "node": "Squash Merge",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Not Ready",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "saveDataSuccessExecution": "all",
+      "saveDataErrorExecution": "all"
+    },
+    "staticData": {
+      "node:Every 5 Minutes": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "meta": null,
+    "nodeGroups": [],
+    "pinData": {},
+    "versionId": "70c02013-a602-44e4-af48-86899464d4ef",
+    "activeVersionId": "70c02013-a602-44e4-af48-86899464d4ef",
+    "versionCounter": 1,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-20T05:26:28.411Z",
+        "createdAt": "2026-09-20T05:26:28.411Z",
+        "role": "workflow:owner",
+        "workflowId": "approvedPrMerger01",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]
