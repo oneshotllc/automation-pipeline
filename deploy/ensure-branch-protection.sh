@@ -6,7 +6,7 @@ GH="$HOME/bin/oneshot-pr exec gh"
 CFG_REPO=${CONFIG_REPO:-oneshotllc/.github}; CFG_PATH=${CONFIG_PATH:-automation/pipeline.json}
 CFG=$($GH api "repos/$CFG_REPO/contents/$CFG_PATH" --jq .content | base64 -d)
 cfg(){ printf '%s' "$CFG" | python3 -c "import json,sys;d=json.load(sys.stdin);v=eval('d'+sys.argv[1]);print(json.dumps(v) if isinstance(v,(dict,list)) else (str(v).lower() if isinstance(v,bool) else v))" "$1"; }
-CHECKS=$(cfg "['ci']['checks']"); REVIEWS=$(cfg "['branch_protection']['required_reviews']"); DISMISS=$(cfg "['branch_protection']['dismiss_stale_reviews']"); ADMINS=$(cfg "['branch_protection']['enforce_admins']"); CONV=$(cfg "['branch_protection']['require_conversation_resolution']"); FORCE=$(cfg "['branch_protection']['allow_force_pushes']"); DEL=$(cfg "['branch_protection']['allow_deletions']")
+CHECKS=$(cfg "['ci']['checks']"); REVIEWS=$(cfg "['branch_protection']['required_reviews']"); DISMISS=$(cfg "['branch_protection']['dismiss_stale_reviews']"); ADMINS=$(cfg "['branch_protection']['enforce_admins']"); CONV=$(cfg "['branch_protection']['require_conversation_resolution']"); FORCE=$(cfg "['branch_protection']['allow_force_pushes']"); DEL=$(cfg "['branch_protection']['allow_deletions']"); STRICT=$(cfg "['branch_protection']['require_up_to_date']" 2>/dev/null || echo false)
 for r in $($GH api "installation/repositories?per_page=100" --jq '.repositories[] | select(.archived==false) | .full_name'); do
   def=$($GH api "repos/$r" --jq .default_branch)
   # Require only check contexts this repository produces on pull requests: a workflow triggered on pull_request
@@ -23,6 +23,6 @@ print(json.dumps(sorted(set(have)|(jobs if on_pr else set()))))
 PY
 )
   done
-  payload=$(python3 -c "import json,sys; ctx=json.loads(sys.argv[1]); print(json.dumps({'required_status_checks': ({'strict': True, 'contexts': ctx} if ctx else None), 'enforce_admins': sys.argv[2]=='true', 'required_pull_request_reviews': {'required_approving_review_count': int(sys.argv[3]), 'dismiss_stale_reviews': sys.argv[4]=='true'}, 'restrictions': None, 'required_conversation_resolution': sys.argv[5]=='true', 'allow_force_pushes': sys.argv[6]=='true', 'allow_deletions': sys.argv[7]=='true'}))" "$produced" "$ADMINS" "$REVIEWS" "$DISMISS" "$CONV" "$FORCE" "$DEL")
+  payload=$(python3 -c "import json,sys; ctx=json.loads(sys.argv[1]); print(json.dumps({'required_status_checks': ({'strict': sys.argv[8]=='true', 'contexts': ctx} if ctx else None), 'enforce_admins': sys.argv[2]=='true', 'required_pull_request_reviews': {'required_approving_review_count': int(sys.argv[3]), 'dismiss_stale_reviews': sys.argv[4]=='true'}, 'restrictions': None, 'required_conversation_resolution': sys.argv[5]=='true', 'allow_force_pushes': sys.argv[6]=='true', 'allow_deletions': sys.argv[7]=='true'}))" "$produced" "$ADMINS" "$REVIEWS" "$DISMISS" "$CONV" "$FORCE" "$DEL" "$STRICT")
   if printf '%s' "$payload" | $GH api -X PUT "repos/$r/branches/$def/protection" --input - >/dev/null 2>&1; then echo "protected $r ($def): reviews=$REVIEWS contexts=$produced"; else echo "FAILED   $r ($def)"; fi
 done

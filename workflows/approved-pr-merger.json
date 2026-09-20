@@ -232,7 +232,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ !$json.isDependabot && $json.pr.state === 'open' && !$json.pr.draft && $json.pr.mergeable_state === $json.cfg.merge.require_state }}",
+              "leftValue": "={{ (() => { const s = $json; const accept = (s.cfg.merge && s.cfg.merge.accept_states) || [s.cfg.merge.require_state]; return !s.isDependabot && s.pr.state === 'open' && !s.pr.draft && accept.includes(s.pr.mergeable_state) && (s.pr.mergeable_state === 'clean' || s.countedOk === true); })() }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -536,7 +536,7 @@
         "color": 4,
         "width": 1700,
         "height": 240,
-        "content": "## Approved PR Merger\n\nMechanics only; every name and policy comes from the config key.\n\nTwo entry points: the schedule (sweep) and a sub-workflow call from the ingress on an approval event. Human-approved PRs merge when the PR's mergeable state equals `merge.require_state`. Dependency-bot PRs merge when `dependabot.auto_merge` is on and the PR is tested (required contexts green, or `dependabot.checks` when the branch declares none); the bot submits the approving review itself. Merge method is `merge.method`, head SHA pinned.\n\nSweep backup for repairs: an open approved pipeline PR that is not clean has its check runs read; each failing counted check (`ci.checks`) becomes a repair item on the intake queue (the sorter dedupes per head SHA + check and applies the attempt cap). A failed merge call goes to the error output and is retried next tick. No model call."
+        "content": "## Approved PR Merger\n\nMechanics only; every name and policy comes from the config key.\n\nTwo entry points: the schedule (sweep) and a sub-workflow call from the ingress on an approval event. Human-approved PRs merge when the PR's mergeable state is one of `merge.accept_states` (fallback `merge.require_state`); for any state other than `clean`, every counted check (`ci.checks`) must also have a conclusion in `merge.ok_conclusions`, so a red non-required job cannot hold an approved PR. Dependency-bot PRs merge when `dependabot.auto_merge` is on and the PR is tested (required contexts green, or `dependabot.checks` when the branch declares none); the bot submits the approving review itself. Merge method is `merge.method`, head SHA pinned.\n\nSweep backup for repairs: an open approved pipeline PR that is not clean has its check runs read; each failing counted check (`ci.checks`) becomes a repair item on the intake queue (the sorter dedupes per head SHA + check and applies the attempt cap). A failed merge call goes to the error output and is retried next tick. No model call."
       }
     },
     {
@@ -641,6 +641,63 @@
           "name": "Redis (local triage queue)"
         }
       }
+    },
+    {
+      "id": "fdb05e6f-710f-467b-b979-5311427b6ea3",
+      "name": "Head Checks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/commits/{{ $json.head_sha }}/check-runs?per_page=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "6afbf963-8044-4222-a996-a1bfc1f3c310",
+      "name": "Merge Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Carries PR State forward and adds countedOk: every counted check (ci.checks) on the head has an ok conclusion.\n// A non-required check that is red (for example a retired job) makes GitHub report 'unstable'; the counted checks are what the pipeline gates on.\nconst s = $('PR State').item.json;\nconst runs = Array.isArray($json.check_runs) ? $json.check_runs : [];\nconst counted = (s.cfg.ci && s.cfg.ci.checks) || [];\nconst okc = new Set((s.cfg.merge && s.cfg.merge.ok_conclusions) || ['success']);\nconst countedOk = counted.length > 0 && counted.every(n => runs.some(c => c.name === n && c.status === 'completed' && okc.has(String(c.conclusion))));\nreturn { json: { ...s, countedOk } };"
+      }
     }
   ],
   "connections": {
@@ -737,17 +794,6 @@
         [
           {
             "node": "PR State",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "PR State": {
-      "main": [
-        [
-          {
-            "node": "Human Approved And Clean",
             "type": "main",
             "index": 0
           }
@@ -899,6 +945,39 @@
         [
           {
             "node": "Enqueue Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PR State": {
+      "main": [
+        [
+          {
+            "node": "Head Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Head Checks": {
+      "main": [
+        [
+          {
+            "node": "Merge Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Decision": {
+      "main": [
+        [
+          {
+            "node": "Human Approved And Clean",
             "type": "main",
             "index": 0
           }
