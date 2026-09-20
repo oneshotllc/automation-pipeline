@@ -212,7 +212,7 @@
         "color": 4,
         "width": 1700,
         "height": 300,
-        "content": "## Queue Sorter\n\nMechanics only; names come from the config key. Every run: load config, then loop-pop the intake queue (max 500 per run).\n\nTriage path (not yet seen): route repo to stream from `streams.rules` / `streams.default`, push to `<stream_prefix><stream>`.\n\nApproval path (already seen): an issue (not a PR) without the hold label whose spec marker exists is checked for open blockers: GitHub issue dependencies first; if that API is unavailable, body lines `<chain.blocked_by_line> #N` are resolved. Only the head of its chain (no open blocker) is claimed once (`<build_prefix><key>` INCR) and pushed to the stream's build queue; a blocked issue is skipped and re-checked on the next sweep. Insert a new issue between two by re-pointing the dependency links; the next sweep picks the new head.\n\nNo model call. Table lookups, key checks and dependency reads only."
+        "content": "## Queue Sorter\n\nMechanics only; names come from the config key. Every run: load config, then loop-pop the intake queue (max 500 per run).\n\nTriage path (not yet seen): issues carrying the configured spec label are marked seen and specified without a model call; everything else is routed repo to stream from `streams.rules` / `streams.default` and pushed to `<stream_prefix><stream>`. Bot-authored pull requests are never triaged.\n\nFeedback and repair items (stage feedback / repair) bypass triage: claimed once per review id or per head SHA + check, repair attempts counted per PR against `repair.max_attempts` (at the cap: a comment on the PR, the needs-triage label on the issue, nothing more), then pushed to the stream's build queue.\n\nApproval path (already seen): an issue (not a PR) without the hold label whose spec marker exists is checked for open blockers (GitHub issue dependencies, body-line fallback); only the head of its chain is claimed once and pushed to the build queue.\n\nNo model call. Table lookups, key checks and dependency reads only."
       }
     },
     {
@@ -647,7 +647,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// Feedback items skip triage and go straight to the build queue; pull requests authored by a configured bot on a pipeline branch are never triaged.\nconst cfg = $('Config').first().json;\nconst it = $json.item || {};\nconst isFeedback = it.stage === 'feedback';\nconst isPR = /\\/pull\\/\\d+/.test(String(it.issue_url || ''));\nconst botPR = isPR && (cfg.bots || []).includes(String(it.author || ''));\nconst key = `${it.repository_owner}/${it.repository_name}#${it.issue_number}`;\nreturn { json: { item: it, key, isFeedback, drop: botPR && !isFeedback, feedback_claim: isFeedback ? `${cfg.feedback.claim_prefix}${key}@${it.feedback_id || ''}` : '' } };"
+        "jsCode": "// Feedback and repair items skip triage and go straight to the build queue; pull requests authored by a configured bot are never triaged; issues that already carry the configured spec label are marked specified and skip triage.\nconst cfg = $('Config').first().json;\nconst it = $json.item || {};\nconst isFeedback = it.stage === 'feedback' || it.stage === 'repair';\nconst isRepair = it.stage === 'repair';\nconst isPR = /\\/pull\\/\\d+/.test(String(it.issue_url || ''));\nconst labels = (it.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst botPR = isPR && (cfg.bots || []).includes(String(it.author || ''));\nconst specPresent = !isPR && !!cfg.labels.spec_present && labels.includes(cfg.labels.spec_present);\nconst key = `${it.repository_owner}/${it.repository_name}#${it.issue_number}`;\nconst prKey = `${it.repository_owner}/${it.repository_name}#${it.pr_number || ''}`;\nconst claimPrefix = isRepair ? cfg.repair.claim_prefix : cfg.feedback.claim_prefix;\nreturn { json: { item: it, key, isFeedback, isRepair, drop: botPR && !isFeedback, specPresent, seen_key: cfg.keys.seen_prefix + key, spec_key: cfg.keys.spec_prefix + key, feedback_claim: isFeedback ? `${claimPrefix}${key}@${it.feedback_id || ''}` : '', attempts_key: isRepair ? `${cfg.repair.attempts_prefix}${prKey}` : '', max_attempts: Number((cfg.repair && cfg.repair.max_attempts) || 3) } };"
       }
     },
     {
@@ -694,6 +694,27 @@
                 "conditions": [
                   {
                     "leftValue": "={{ $json.drop }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "specified",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.specPresent && !$json.isFeedback }}",
                     "operator": {
                       "type": "boolean",
                       "operation": "true",
@@ -798,6 +819,282 @@
         "redis": {
           "id": "redisLocalQueue1",
           "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "acb37c66-f796-40df-bbd8-a21c15269e15",
+      "name": "Already Specified",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -420
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "spec",
+        "key": "={{ $json.spec_key }}",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "28b2c28e-dff9-4d30-a899-be31ebf2d602",
+      "name": "Spec Marker Missing",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.spec }}",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "7c81ff78-8919-4538-a04d-b96119d2773e",
+      "name": "Mark Seen And Specified",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -480
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const c = $('Classify Item').item.json;\nreturn { json: { seen_key: c.seen_key, spec_key: c.spec_key, key: c.key } };"
+      }
+    },
+    {
+      "id": "563f4852-de80-4afc-a376-bc96cfc995fe",
+      "name": "Set Seen",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        -480
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "={{ $json.seen_key }}",
+        "value": "1",
+        "keyType": "string",
+        "expire": true,
+        "ttl": 604800
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "57db031a-72b9-416c-93bf-2dee7c7588b9",
+      "name": "Set Spec Marker",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        -480
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "={{ $('Mark Seen And Specified').item.json.spec_key }}",
+        "value": "spec-present-label",
+        "keyType": "string",
+        "expire": false
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "0dd15a3b-8b8b-4669-9a29-9b0ae6ae23b4",
+      "name": "Is Repair",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1430,
+        -330
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Classify Item').item.json.isRepair }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a1956283-1f79-44e0-a5c6-b5d0f0219967",
+      "name": "Count Repair Attempt",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        -440
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ $('Classify Item').item.json.attempts_key }}",
+        "expire": true,
+        "ttl": 2592000
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "68791f94-c344-4e76-99a6-eb3e3672ba97",
+      "name": "Under Attempt Cap",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1650,
+        -440
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number(Object.values($json)[0]) <= $('Classify Item').item.json.max_attempts }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "b6843925-e82f-4ff7-b777-bdfba5b1c734",
+      "name": "Cap Reached: Comment On PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        -560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.pr_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: 'Automatic repair attempts for this pull request have reached the configured cap (' + $('Classify Item').item.json.max_attempts + '). The last failing check was `' + $('Pop Intake Item').item.json.item.check_name + '` (' + $('Pop Intake Item').item.json.item.run_url + '). No further automatic repair runs; a person decides next.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "a689a0fd-0363-443b-9ef9-88f2233548f6",
+      "name": "Cap Reached: Label Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        -560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: [ $('Config').first().json.labels.needs_triage ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
         }
       }
     }
@@ -1167,6 +1464,13 @@
         ],
         [
           {
+            "node": "Already Specified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Check Seen",
             "type": "main",
             "index": 0
@@ -1189,7 +1493,7 @@
       "main": [
         [
           {
-            "node": "Feedback Payload",
+            "node": "Is Repair",
             "type": "main",
             "index": 0
           }
@@ -1215,6 +1519,137 @@
       ]
     },
     "Push Feedback To Build Queue": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Specified": {
+      "main": [
+        [
+          {
+            "node": "Spec Marker Missing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Spec Marker Missing": {
+      "main": [
+        [
+          {
+            "node": "Mark Seen And Specified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Seen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Seen And Specified": {
+      "main": [
+        [
+          {
+            "node": "Set Seen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Seen": {
+      "main": [
+        [
+          {
+            "node": "Set Spec Marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Spec Marker": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Repair": {
+      "main": [
+        [
+          {
+            "node": "Count Repair Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Feedback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Repair Attempt": {
+      "main": [
+        [
+          {
+            "node": "Under Attempt Cap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under Attempt Cap": {
+      "main": [
+        [
+          {
+            "node": "Feedback Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cap Reached: Comment On PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cap Reached: Comment On PR": {
+      "main": [
+        [
+          {
+            "node": "Cap Reached: Label Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cap Reached: Label Issue": {
       "main": [
         [
           {

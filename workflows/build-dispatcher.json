@@ -154,7 +154,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "const cfg = $('Config').first().json;\nconst it = $json.item;\nconst repo = `${it.repository_owner}/${it.repository_name}`;\nconst branch = cfg.build.branch_prefix + it.issue_number;\nconst mode = it.stage === 'feedback' ? 'feedback' : 'build';\nreturn { json: { repo, owner: it.repository_owner, name: it.repository_name, issue: it.issue_number, branch, mode,\n  dispatch_repo: cfg.build.dispatch_repo, workflow_file: cfg.build.workflow_file, ref: cfg.build.ref,\n  inputs: { repo, issue: String(it.issue_number), branch, hold_label: cfg.labels.hold, pr_open_label: cfg.labels.pr_open, reviewers: (cfg.approvers || []).join(','), runner_label: cfg.build.runner_label, spec_sentinel: cfg.spec.sentinel, agent: cfg.build.agent, mode } } };"
+        "jsCode": "const cfg = $('Config').first().json;\nconst it = $json.item;\nconst repo = `${it.repository_owner}/${it.repository_name}`;\nconst branch = cfg.build.branch_prefix + it.issue_number;\nconst mode = it.stage === 'feedback' ? 'feedback' : (it.stage === 'repair' ? 'repair' : 'build');\nreturn { json: { repo, owner: it.repository_owner, name: it.repository_name, issue: it.issue_number, branch, mode,\n  dispatch_repo: cfg.build.dispatch_repo, workflow_file: cfg.build.workflow_file, ref: cfg.build.ref,\n  inputs: { repo, issue: String(it.issue_number), branch, hold_label: cfg.labels.hold, pr_open_label: cfg.labels.pr_open, reviewers: (cfg.approvers || []).join(','), runner_label: cfg.build.runner_label, spec_sentinel: cfg.spec.sentinel, agent: cfg.build.agent, mode } } };"
       }
     },
     {
@@ -217,7 +217,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ $('Dispatch Inputs').item.json.mode === 'feedback' ? (Array.isArray($json.body) && $json.body.length > 0) : (Array.isArray($json.body) && $json.body.length === 0) }}",
+              "leftValue": "={{ ['feedback','repair'].includes($('Dispatch Inputs').item.json.mode) ? (Array.isArray($json.body) && $json.body.length > 0) : (Array.isArray($json.body) && $json.body.length === 0) }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -298,7 +298,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ body: ($('Dispatch Inputs').item.json.mode === 'feedback' ? 'Feedback build dispatched on branch `' : 'Build dispatched on branch `') + $('Dispatch Inputs').item.json.branch + '`. The run reports back when it finishes.' }) }}",
+        "jsonBody": "={{ JSON.stringify({ body: ({ feedback: 'Feedback build dispatched on branch `', repair: 'Repair build dispatched on branch `', build: 'Build dispatched on branch `' })[$('Dispatch Inputs').item.json.mode] + $('Dispatch Inputs').item.json.branch + '`. The run reports back when it finishes.' }) }}",
         "options": {}
       },
       "credentials": {

@@ -536,7 +536,110 @@
         "color": 4,
         "width": 1700,
         "height": 240,
-        "content": "## Approved PR Merger\n\nMechanics only; every name and policy comes from the config key (`cfg:pipeline`, synced from the org's automation config by the Config Loader).\n\nTwo entry points: the schedule (sweep) and a sub-workflow call from the ingress on an approval event. Human-approved PRs merge when the PR's mergeable state equals `merge.require_state`. Dependency-bot PRs (`dependabot.author`) merge when `dependabot.auto_merge` is on and the PR is tested: every required status context on the base branch is green, or, when the branch declares none, every check run named in `dependabot.checks` is green. Other jobs never block. The bot submits the approving review itself. Merge method is `merge.method`, head SHA pinned. A failed merge call goes to the error output and is retried next tick. No model call."
+        "content": "## Approved PR Merger\n\nMechanics only; every name and policy comes from the config key.\n\nTwo entry points: the schedule (sweep) and a sub-workflow call from the ingress on an approval event. Human-approved PRs merge when the PR's mergeable state equals `merge.require_state`. Dependency-bot PRs merge when `dependabot.auto_merge` is on and the PR is tested (required contexts green, or `dependabot.checks` when the branch declares none); the bot submits the approving review itself. Merge method is `merge.method`, head SHA pinned.\n\nSweep backup for repairs: an open approved pipeline PR that is not clean has its check runs read; each failing counted check (`ci.checks`) becomes a repair item on the intake queue (the sorter dedupes per head SHA + check and applies the attempt cap). A failed merge call goes to the error output and is retried next tick. No model call."
+      }
+    },
+    {
+      "id": "eb58f976-f0c5-43a9-ac45-7113ba09d707",
+      "name": "Pipeline PR Not Clean",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        700
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ !$json.isDependabot && $json.pr.state === 'open' && String($json.pr.head.ref || '').startsWith(String($json.cfg.build.branch_prefix || '')) && ['unstable','blocked','dirty'].includes($json.pr.mergeable_state) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c8a63be1-358d-4d95-8c74-9ded07533dc8",
+      "name": "PR Check Runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        700
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/commits/{{ $json.head_sha }}/check-runs?per_page=100",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "d7e499e6-0bd4-4d57-b386-c1c6775b5aa4",
+      "name": "Failing Counted Checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        700
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Sweep backup for the repair path: one repair item per failing counted check on an open pipeline PR.\nconst out = [];\nconst states = $('Pipeline PR Not Clean').all();\n$input.all().forEach((it, i) => {\n  const s = states[i] ? states[i].json : null; if (!s) return;\n  const cfg = s.cfg; const counted = (cfg.ci && cfg.ci.checks) || [];\n  const okc = new Set(['success', 'skipped', 'neutral']);\n  const prefix = String(cfg.build.branch_prefix || '');\n  const linked = Number(String(s.pr.head.ref).slice(prefix.length)) || 0;\n  for (const c of (it.json.check_runs || [])) {\n    if (!counted.includes(c.name)) continue;\n    if (c.status !== 'completed' || okc.has(String(c.conclusion))) continue;\n    const item = { delivery_id: 'sweep:' + s.head_sha + ':' + c.name, repository_owner: s.owner, repository_name: s.repo, issue_number: linked, pr_number: s.number, stage: 'repair', feedback_id: s.head_sha + ':' + c.name, check_name: c.name, run_url: c.html_url || '', head_sha: s.head_sha, title: c.name, body: '', labels: [], author: '', issue_url: s.pr.html_url };\n    if (linked > 0) out.push({ json: { list: cfg.queues.intake, payload: JSON.stringify(item) } });\n  }\n});\nreturn out;"
+      }
+    },
+    {
+      "id": "ad1a3af3-81d4-4e9c-b296-7c0f396d45fa",
+      "name": "Enqueue Repair",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3080,
+        700
+      ],
+      "parameters": {
+        "operation": "push",
+        "list": "={{ $json.list }}",
+        "messageData": "={{ $json.payload }}",
+        "tail": false
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
       }
     }
   ],
@@ -692,7 +795,7 @@
         ],
         [
           {
-            "node": "Skipped This Tick",
+            "node": "Pipeline PR Not Clean",
             "type": "main",
             "index": 0
           }
@@ -756,6 +859,46 @@
         [
           {
             "node": "Merge Failed, Retry Next Tick",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline PR Not Clean": {
+      "main": [
+        [
+          {
+            "node": "PR Check Runs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skipped This Tick",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PR Check Runs": {
+      "main": [
+        [
+          {
+            "node": "Failing Counted Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failing Counted Checks": {
+      "main": [
+        [
+          {
+            "node": "Enqueue Repair",
             "type": "main",
             "index": 0
           }
