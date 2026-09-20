@@ -1,269 +1,309 @@
-{
-  "name": "GitHub Issue Reconciliation Poller",
-  "active": true,
-  "settings": {
-    "executionOrder": "v1",
-    "availableInMCP": true
-  },
-  "nodes": [
-    {
-      "id": "91f9a27c-6a01-4d44-927f-e1fa6bc90d23",
-      "name": "Every 5 Minutes",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.3,
-      "position": [
-        0,
-        96
-      ],
-      "parameters": {
-        "rule": {
-          "interval": [
+[
+  {
+    "updatedAt": "2026-09-19T19:14:53.450Z",
+    "createdAt": "2026-09-19T04:08:37.980Z",
+    "id": "kQmdg9QLRiQq2CFz",
+    "name": "GitHub Issue Reconciliation Poller",
+    "description": "Every 5 min: list all oneshotllc repos, open issues and PRs, normalize, LPUSH to queue:intake. Dedup downstream via seen:{owner}/{repo}#{n}. GitHub list failures fail the run (C1, .github#28).",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "91f9a27c-6a01-4d44-927f-e1fa6bc90d23",
+        "name": "Every 5 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          0,
+          96
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 5
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "6ae6ef36-2eb4-459a-a8e6-6fd411091e5e",
+        "name": "List Org Repositories",
+        "type": "n8n-nodes-base.github",
+        "typeVersion": 1.1,
+        "position": [
+          224,
+          96
+        ],
+        "parameters": {
+          "authentication": "githubAppApi",
+          "resource": "organization",
+          "operation": "getRepositories",
+          "owner": {
+            "__rl": true,
+            "mode": "name",
+            "value": "oneshotllc"
+          },
+          "returnAll": true
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        },
+        "webhookId": "e90b12e6-0737-487e-8abc-db7d39cd4c39"
+      },
+      {
+        "id": "3c03e03a-5c53-49a0-ab2c-2183bc6d7d63",
+        "name": "List Open Issues",
+        "type": "n8n-nodes-base.github",
+        "typeVersion": 1.1,
+        "position": [
+          448,
+          0
+        ],
+        "parameters": {
+          "authentication": "githubAppApi",
+          "resource": "repository",
+          "operation": "getIssues",
+          "owner": {
+            "__rl": true,
+            "mode": "name",
+            "value": "oneshotllc"
+          },
+          "repository": {
+            "__rl": true,
+            "mode": "name",
+            "value": "={{ $json.name }}"
+          },
+          "returnAll": true,
+          "getRepositoryIssuesFilters": {
+            "state": "open"
+          }
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        },
+        "onError": "stopWorkflow",
+        "webhookId": "de7f4dab-cc99-4046-ad4f-c153f754d3d0"
+      },
+      {
+        "id": "96533a72-62cf-4317-8deb-351aa30963f4",
+        "name": "Combine Open Items",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3.2,
+        "position": [
+          672,
+          96
+        ],
+        "parameters": {
+          "mode": "append",
+          "numberInputs": 2
+        }
+      },
+      {
+        "id": "33ec7158-91b2-45f1-ae9e-eb2c52febb95",
+        "name": "List Open Pull Requests",
+        "type": "n8n-nodes-base.github",
+        "typeVersion": 1.1,
+        "position": [
+          448,
+          192
+        ],
+        "parameters": {
+          "authentication": "githubAppApi",
+          "resource": "repository",
+          "operation": "getPullRequests",
+          "owner": {
+            "__rl": true,
+            "mode": "name",
+            "value": "oneshotllc"
+          },
+          "repository": {
+            "__rl": true,
+            "mode": "name",
+            "value": "={{ $json.name }}"
+          },
+          "returnAll": true,
+          "getRepositoryPullRequestsFilters": {
+            "state": "open"
+          }
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        },
+        "onError": "stopWorkflow",
+        "webhookId": "101b70d1-ce2f-489e-b8ae-baa67a45894d"
+      },
+      {
+        "id": "d1d60f46-c597-46c2-bfbc-b644d1010b1a",
+        "name": "Build Normalized Events",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          896,
+          96
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Backup fetch: re-inject the full open set every cycle.\n// No dedup/claim here - the triage workflow's atomic item-key claim dedupes.\nconst seen = new Set();\nconst out = [];\nfor (const item of $input.all()) {\n  const g = item.json || {};\n  const url = g.html_url || '';\n  const m = String(url).match(/^https?:\\/\\/[^\\/]+\\/([^\\/]+)\\/([^\\/]+)\\/(?:issues|pull)\\/(\\d+)/);\n  if (!m) { continue; }\n  const owner = m[1];\n  const repo = m[2];\n  const number = parseInt(m[3], 10);\n  const key = owner + '/' + repo + '#' + number;\n  if (seen.has(key)) { continue; }\n  seen.add(key);\n  const rawLabels = Array.isArray(g.labels) ? g.labels : [];\n  const labels = rawLabels.map(function (l) { return typeof l === 'string' ? l : (l && l.name) || ''; }).filter(function (l) { return l !== ''; });\n  out.push({ json: {\n    delivery_id: 'reconcile:' + key,\n    repository_owner: owner,\n    repository_name: repo,\n    issue_number: number,\n    title: g.title == null ? '' : String(g.title),\n    body: g.body == null ? '' : String(g.body),\n    labels: labels,\n    author: (g.user && g.user.login) || '',\n    issue_url: url\n  } });\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "8edcd765-8c4d-4ee8-8c76-eb0f7e52302b",
+        "name": "Enqueue To Redis Queue",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1120,
+          96
+        ],
+        "parameters": {
+          "list": "queue:intake",
+          "messageData": "={{ JSON.stringify($json) }}",
+          "operation": "push",
+          "tail": false
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Every 5 Minutes": {
+        "main": [
+          [
             {
-              "field": "minutes",
-              "minutesInterval": 5
+              "node": "List Org Repositories",
+              "type": "main",
+              "index": 0
             }
           ]
-        }
-      }
-    },
-    {
-      "id": "6ae6ef36-2eb4-459a-a8e6-6fd411091e5e",
-      "name": "List Org Repositories",
-      "type": "n8n-nodes-base.github",
-      "typeVersion": 1.1,
-      "position": [
-        224,
-        96
-      ],
-      "parameters": {
-        "authentication": "githubAppApi",
-        "resource": "organization",
-        "operation": "getRepositories",
-        "owner": {
-          "__rl": true,
-          "mode": "name",
-          "value": "oneshotllc"
-        },
-        "returnAll": true
+        ]
       },
-      "webhookId": "e90b12e6-0737-487e-8abc-db7d39cd4c39",
-      "credentials": {
-        "githubAppApi": {
-          "id": "ghAppOneshotPr01",
-          "name": "GitHub App - oneshot-pr-bot"
-        }
-      }
-    },
-    {
-      "id": "3c03e03a-5c53-49a0-ab2c-2183bc6d7d63",
-      "name": "List Open Issues",
-      "type": "n8n-nodes-base.github",
-      "typeVersion": 1.1,
-      "position": [
-        448,
-        0
-      ],
-      "parameters": {
-        "authentication": "githubAppApi",
-        "resource": "repository",
-        "operation": "getIssues",
-        "owner": {
-          "__rl": true,
-          "mode": "name",
-          "value": "oneshotllc"
-        },
-        "repository": {
-          "__rl": true,
-          "mode": "name",
-          "value": "={{ $json.name }}"
-        },
-        "returnAll": true,
-        "getRepositoryIssuesFilters": {
-          "state": "open"
-        }
-      },
-      "onError": "continueRegularOutput",
-      "webhookId": "de7f4dab-cc99-4046-ad4f-c153f754d3d0",
-      "credentials": {
-        "githubAppApi": {
-          "id": "ghAppOneshotPr01",
-          "name": "GitHub App - oneshot-pr-bot"
-        }
-      }
-    },
-    {
-      "id": "96533a72-62cf-4317-8deb-351aa30963f4",
-      "name": "Combine Open Items",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3.2,
-      "position": [
-        672,
-        96
-      ],
-      "parameters": {
-        "mode": "append",
-        "numberInputs": 2
-      }
-    },
-    {
-      "id": "33ec7158-91b2-45f1-ae9e-eb2c52febb95",
-      "name": "List Open Pull Requests",
-      "type": "n8n-nodes-base.github",
-      "typeVersion": 1.1,
-      "position": [
-        448,
-        192
-      ],
-      "parameters": {
-        "authentication": "githubAppApi",
-        "resource": "repository",
-        "operation": "getPullRequests",
-        "owner": {
-          "__rl": true,
-          "mode": "name",
-          "value": "oneshotllc"
-        },
-        "repository": {
-          "__rl": true,
-          "mode": "name",
-          "value": "={{ $json.name }}"
-        },
-        "returnAll": true,
-        "getRepositoryPullRequestsFilters": {
-          "state": "open"
-        }
-      },
-      "onError": "continueRegularOutput",
-      "webhookId": "101b70d1-ce2f-489e-b8ae-baa67a45894d",
-      "credentials": {
-        "githubAppApi": {
-          "id": "ghAppOneshotPr01",
-          "name": "GitHub App - oneshot-pr-bot"
-        }
-      }
-    },
-    {
-      "id": "d1d60f46-c597-46c2-bfbc-b644d1010b1a",
-      "name": "Build Normalized Events",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        896,
-        96
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "language": "javaScript",
-        "jsCode": "// Backup fetch: re-inject the full open set every cycle.\n// No dedup/claim here - the triage workflow's atomic item-key claim dedupes.\nconst seen = new Set();\nconst out = [];\nfor (const item of $input.all()) {\n  const g = item.json || {};\n  const url = g.html_url || '';\n  const m = String(url).match(/^https?:\\/\\/[^\\/]+\\/([^\\/]+)\\/([^\\/]+)\\/(?:issues|pull)\\/(\\d+)/);\n  if (!m) { continue; }\n  const owner = m[1];\n  const repo = m[2];\n  const number = parseInt(m[3], 10);\n  const key = owner + '/' + repo + '#' + number;\n  if (seen.has(key)) { continue; }\n  seen.add(key);\n  const rawLabels = Array.isArray(g.labels) ? g.labels : [];\n  const labels = rawLabels.map(function (l) { return typeof l === 'string' ? l : (l && l.name) || ''; }).filter(function (l) { return l !== ''; });\n  out.push({ json: {\n    delivery_id: 'reconcile:' + key,\n    repository_owner: owner,\n    repository_name: repo,\n    issue_number: number,\n    title: g.title == null ? '' : String(g.title),\n    body: g.body == null ? '' : String(g.body),\n    labels: labels,\n    author: (g.user && g.user.login) || '',\n    issue_url: url\n  } });\n}\nreturn out;"
-      }
-    },
-    {
-      "id": "dd703f88-d287-4ad6-a571-02640d5825d1",
-      "name": "POST To Triage Webhook",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.5,
-      "position": [
-        1120,
-        96
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "http://127.0.0.1:5678/webhook/github-issue-triage",
-        "authentication": "none",
-        "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json) }}",
-        "options": {
-          "timeout": 30000,
-          "batching": {
-            "batch": {
-              "batchSize": 5,
-              "batchInterval": 1000
+      "List Org Repositories": {
+        "main": [
+          [
+            {
+              "node": "List Open Issues",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "List Open Pull Requests",
+              "type": "main",
+              "index": 0
             }
-          },
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
-        }
+          ]
+        ]
       },
-      "onError": "continueRegularOutput"
+      "List Open Issues": {
+        "main": [
+          [
+            {
+              "node": "Combine Open Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Combine Open Items": {
+        "main": [
+          [
+            {
+              "node": "Build Normalized Events",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "List Open Pull Requests": {
+        "main": [
+          [
+            {
+              "node": "Combine Open Items",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Build Normalized Events": {
+        "main": [
+          [
+            {
+              "node": "Enqueue To Redis Queue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true
+    },
+    "staticData": {
+      "node:Every 5 Minutes": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": null,
+    "versionId": "aae907b4-2761-40bd-b29d-e4796e05833e",
+    "activeVersionId": "aae907b4-2761-40bd-b29d-e4796e05833e",
+    "versionCounter": 3,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-19T04:08:37.981Z",
+        "createdAt": "2026-09-19T04:08:37.981Z",
+        "role": "workflow:owner",
+        "workflowId": "kQmdg9QLRiQq2CFz",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "oneshotllc",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": "C1: push to queue:intake; GitHub list errors stop the workflow",
+      "description": "oneshotllc/.github#28 scenarios 1 and 3: rename triage:queue -> queue:intake; remove onError=continueRegularOutput from List Open Issues and List Open Pull Requests."
     }
-  ],
-  "connections": {
-    "Every 5 Minutes": {
-      "main": [
-        [
-          {
-            "node": "List Org Repositories",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "List Org Repositories": {
-      "main": [
-        [
-          {
-            "node": "List Open Issues",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "List Open Pull Requests",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "List Open Issues": {
-      "main": [
-        [
-          {
-            "node": "Combine Open Items",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Combine Open Items": {
-      "main": [
-        [
-          {
-            "node": "Build Normalized Events",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "List Open Pull Requests": {
-      "main": [
-        [
-          {
-            "node": "Combine Open Items",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Build Normalized Events": {
-      "main": [
-        [
-          {
-            "node": "POST To Triage Webhook",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "pinData": {}
-}
+  }
+]

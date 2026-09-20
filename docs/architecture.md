@@ -13,7 +13,7 @@ stateless workers).
 ## End-to-end flow
 
 1. GitHub (app `oneshot-pr-bot`, 27 events) -> POST webhook
-   `https://macstudio.tailcb79bc.ts.net:10000/webhooks/github`
+   `https://<funnel-host>:10000/webhooks/github`
 2. Tailscale funnel `:10000` -> local n8n webhook (RE-POINT from deleted Caddy)
 3. n8n "Triage Intake" webhook -> enqueue normalized item to Redis (LPUSH)
 4. Redis: durable queue + atomic `SETNX owner/repo#number` dedup
@@ -29,7 +29,7 @@ stateless workers).
 - 4 workflows: triage `d59YY3F06IEMKLWh`, poller `kQmdg9QLRiQq2CFz`,
   PR-feedback `21FtNFI7kOtGcLUQ`, pipeline-2 `ghIssuePlanStage2`
 - GitHub App `oneshot-pr-bot` (27 events, webhook -> funnel), credential `ghAppOneshotPr01`
-- Tailscale funnel `https://macstudio.tailcb79bc.ts.net:10000`
+- Tailscale funnel `https://<funnel-host>:10000`
 - Claude shim `127.0.0.1:8790` + `CLAUDE_CODE_OAUTH_TOKEN`
 - This repo (exported workflow definitions)
 

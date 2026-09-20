@@ -38,3 +38,11 @@ and still filters on the old `oneshotmn/oneshotmn` repo — needs re-pointing to
 ## Org
 
 `oneshotllc` (renamed from `oneshotmn` 2026-09-19).
+
+## State after C1–C4 (2026-09-19, oneshotllc/.github#27)
+
+- Queues: `queue:intake` (webhook + poller push here) → **sorter** (`queue-sorter.json`) → `queue:oneshotllc` → **consumer** (`redis-triage-consumer.json`). Claims: `seen:{owner}/{repo}#{n}` (7 d), `spec:{key}` (spec posted), `build:{key}` (approval sweeps). Routing table: `oneshotllc/.github` `automation/streams.json`.
+- Approval: every spec'd issue is labeled `hold`; removing `hold` on GitHub releases it to `queue:build:<stream>` exactly once (C7 consumes it).
+- Ingress: GitHub App webhook → Tailscale Funnel → Caddy (`/webhook/*` only) → `github-issue-tdd-bdd-triage.json` with HMAC verification (secret in loopback Redis, never in these exports). The 5-minute poller is the backstop; the sorter dedupes both.
+- `checks/` holds deterministic exit-code checks used as the RED/GREEN evidence on the chain tickets.
+- Retired: Pipeline 2 (`ghIssuePlanStage2`, deactivated). The Python queue service on `127.0.0.1:8766/8776` referenced below is gone; the PR feedback loop is re-wired in C8.

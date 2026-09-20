@@ -1,0 +1,722 @@
+[
+  {
+    "updatedAt": "2026-09-19T19:32:56.860Z",
+    "createdAt": "2026-09-19T19:25:01.601Z",
+    "id": "EuMYAIadQbkYh0FH",
+    "name": "Queue Sorter (intake → stream)",
+    "description": "C2 sorter (oneshotllc/.github#29): drains queue:intake, drops already-seen items, routes repo→stream via oneshotllc/.github automation/streams.json, pushes to queue:<stream> with stream in the payload.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "096d972a-b8bd-440e-9b61-b93be114da7a",
+        "name": "Every Minute",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 1
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "2ad4b96d-9d20-4f8d-939a-7f291c5e3b9a",
+        "name": "Load Routing Table",
+        "type": "n8n-nodes-base.github",
+        "typeVersion": 1.1,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "authentication": "githubAppApi",
+          "resource": "file",
+          "operation": "get",
+          "owner": {
+            "__rl": true,
+            "mode": "name",
+            "value": "oneshotllc"
+          },
+          "repository": {
+            "__rl": true,
+            "mode": "name",
+            "value": ".github"
+          },
+          "filePath": "automation/streams.json",
+          "asBinaryProperty": false,
+          "additionalParameters": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        },
+        "webhookId": "f7bd16a5-2791-4d92-9dee-a0e0086bf273"
+      },
+      {
+        "id": "e4116335-9872-486e-ab4f-c303b6632d7a",
+        "name": "Pop Intake Item",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          440,
+          200
+        ],
+        "parameters": {
+          "operation": "pop",
+          "list": "queue:intake",
+          "tail": true,
+          "propertyName": "item",
+          "options": {}
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "b025b51a-f788-4f8d-98a9-952426500376",
+        "name": "Had Item",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          660,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.item }}",
+                "operator": {
+                  "type": "object",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              },
+              {
+                "leftValue": "={{ $runIndex }}",
+                "operator": {
+                  "type": "number",
+                  "operation": "lt"
+                },
+                "rightValue": 500
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "2be921cb-3623-4bd4-82c3-598e77b4b25f",
+        "name": "Intake Empty",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          880,
+          360
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "ad89d26e-64b0-4cf0-a4bd-e4252d4b920f",
+        "name": "Check Seen",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          880,
+          100
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "seen",
+          "key": "=seen:{{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }}",
+          "keyType": "string",
+          "options": {}
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "e6f63080-71bf-4d8a-bc3b-9f31b78ec0a1",
+        "name": "Already Seen",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1100,
+          100
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.seen }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "bc4dea2c-f86c-4915-8f9a-4ae40b4487b1",
+        "name": "Drop Duplicate",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1320,
+          0
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "6d6ecf18-4114-4326-abe4-8406a79bd61d",
+        "name": "Route To Stream",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          200
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "language": "javaScript",
+          "jsCode": "// Sorter routing (C2, oneshotllc/.github#29). Table lookup only; never logic that needs a model.\nconst src = $('Pop Intake Item').item.json.item;\nconst raw = $('Load Routing Table').first().json.content || '';\nconst table = JSON.parse(Buffer.from(String(raw).replace(/\\n/g, ''), 'base64').toString('utf8'));\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of (table.rules || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = table.default || null;\nif (!stream) throw new Error(`sorter: no stream for ${full} and no default in streams.json`);\nconst item = Object.assign({}, src, { stream });\nreturn { json: { stream, key: `${full}#${src.issue_number}`, payload: JSON.stringify(item) } };"
+        }
+      },
+      {
+        "id": "6f4e592e-a3b7-44d7-8142-ac604c798184",
+        "name": "Push To Stream Queue",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1540,
+          200
+        ],
+        "parameters": {
+          "operation": "push",
+          "list": "=queue:{{ $json.stream }}",
+          "messageData": "={{ $json.payload }}",
+          "tail": false
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "253e7fc5-b914-4c7b-aacf-fad12bf82f83",
+        "name": "Sorter Notes",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -160
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 1700,
+          "height": 300,
+          "content": "## Sorter (C2 #29, C3 #30)\n\nEvery minute: load `automation/streams.json` from oneshotllc/.github once, then loop RPOP `queue:intake` (max 500/run).\n\n**Triage path** (not yet seen): route repo → stream from the table, LPUSH to `queue:<stream>`. The consumer posts the spec, labels `hold`, sets `spec:{key}`.\n\n**Approval path** (already seen): if the item is an issue (not a PR), has no `hold` label, and `spec:{key}` exists, INCR `build:{key}`; on the first claim only, LPUSH to `queue:build:<stream>`. Removing `hold` on GitHub is therefore the one approval action; the next poller tick (≤5 min) releases the build exactly once.\n\nNo model calls here, ever. Table lookups and Redis keys only."
+        }
+      },
+      {
+        "id": "b080a0d1-bff7-43ca-bc0b-0d4139dd2079",
+        "name": "Approval Eligibility",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          -140
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "language": "javaScript",
+          "jsCode": "// Approval path (C3, oneshotllc/.github#30): a seen issue with no `hold` label may proceed to the build queue.\nconst src = $('Pop Intake Item').item.json.item;\nconst labels = (src.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst isPR = /\\/pull\\/\\d+/.test(String(src.issue_url || ''));\nconst held = labels.includes('hold');\nconst key = `${src.repository_owner}/${src.repository_name}#${src.issue_number}`;\nreturn { json: { key, eligible: !held && !isPR, held, isPR } };"
+        }
+      },
+      {
+        "id": "8b8506c3-02b5-4b7e-ac1c-a552893503a7",
+        "name": "Eligible",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1540,
+          -140
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.eligible }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "1d742999-503d-4410-ad3f-306cae1066d7",
+        "name": "Get Spec Marker",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1760,
+          -140
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "spec",
+          "key": "=spec:{{ $json.key }}",
+          "keyType": "string",
+          "options": {}
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "74493509-1fdd-4f4e-9049-a5d9573e71bd",
+        "name": "Has Spec",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1980,
+          -140
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.spec }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "fe6f16dd-534e-4795-94dd-ea1a2351d7e4",
+        "name": "Claim Build",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          2200,
+          -140
+        ],
+        "parameters": {
+          "operation": "incr",
+          "key": "=build:{{ $('Approval Eligibility').item.json.key }}",
+          "expire": false
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "2ee69b90-1f62-4fb4-a0db-5ec1eeb06436",
+        "name": "First Build Claim",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2420,
+          -140
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ Object.values($json)[0] }}",
+                "operator": {
+                  "type": "number",
+                  "operation": "equals"
+                },
+                "rightValue": 1
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "0d1f3b74-d097-4e43-acfa-723dfe1f7b85",
+        "name": "Build Payload",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2640,
+          -140
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "language": "javaScript",
+          "jsCode": "// Same table lookup as Route To Stream; the build queue is per stream too.\nconst src = $('Pop Intake Item').item.json.item;\nconst raw = $('Load Routing Table').first().json.content || '';\nconst table = JSON.parse(Buffer.from(String(raw).replace(/\\n/g, ''), 'base64').toString('utf8'));\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of (table.rules || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = table.default || null;\nif (!stream) throw new Error(`sorter: no stream for ${full}`);\nconst item = Object.assign({}, src, { stream, stage: 'build', approved_at: new Date().toISOString() });\nreturn { json: { stream, key: `${full}#${src.issue_number}`, payload: JSON.stringify(item) } };"
+        }
+      },
+      {
+        "id": "c972b902-5216-4746-9557-c6791855f7a0",
+        "name": "Push To Build Queue",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          2860,
+          -140
+        ],
+        "parameters": {
+          "operation": "push",
+          "list": "=queue:build:{{ $json.stream }}",
+          "messageData": "={{ $json.payload }}",
+          "tail": false
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Every Minute": {
+        "main": [
+          [
+            {
+              "node": "Load Routing Table",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load Routing Table": {
+        "main": [
+          [
+            {
+              "node": "Pop Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pop Intake Item": {
+        "main": [
+          [
+            {
+              "node": "Had Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Had Item": {
+        "main": [
+          [
+            {
+              "node": "Check Seen",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Intake Empty",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Seen": {
+        "main": [
+          [
+            {
+              "node": "Already Seen",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Already Seen": {
+        "main": [
+          [
+            {
+              "node": "Approval Eligibility",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Route To Stream",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Drop Duplicate": {
+        "main": [
+          [
+            {
+              "node": "Pop Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Route To Stream": {
+        "main": [
+          [
+            {
+              "node": "Push To Stream Queue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Push To Stream Queue": {
+        "main": [
+          [
+            {
+              "node": "Pop Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Approval Eligibility": {
+        "main": [
+          [
+            {
+              "node": "Eligible",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Eligible": {
+        "main": [
+          [
+            {
+              "node": "Get Spec Marker",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Drop Duplicate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Spec Marker": {
+        "main": [
+          [
+            {
+              "node": "Has Spec",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Spec": {
+        "main": [
+          [
+            {
+              "node": "Claim Build",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Drop Duplicate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claim Build": {
+        "main": [
+          [
+            {
+              "node": "First Build Claim",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "First Build Claim": {
+        "main": [
+          [
+            {
+              "node": "Build Payload",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Drop Duplicate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Payload": {
+        "main": [
+          [
+            {
+              "node": "Push To Build Queue",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Push To Build Queue": {
+        "main": [
+          [
+            {
+              "node": "Pop Intake Item",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "saveDataErrorExecution": "all",
+      "saveDataSuccessExecution": "all"
+    },
+    "staticData": {
+      "node:Every Minute": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": null,
+    "versionId": "24f0638f-2f95-4d94-9333-772f5f5c38c3",
+    "activeVersionId": "24f0638f-2f95-4d94-9333-772f5f5c38c3",
+    "versionCounter": 3,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-19T19:25:01.602Z",
+        "createdAt": "2026-09-19T19:25:01.602Z",
+        "role": "workflow:owner",
+        "workflowId": "EuMYAIadQbkYh0FH",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "oneshotllc",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": "C3: approval path — seen + no hold + spec → build queue once (draft)",
+      "description": "oneshotllc/.github#30 scenarios 1 and 2: already-seen issues without hold and with a spec marker are pushed to queue:build:<stream> exactly once via an INCR claim on build:{key}. PRs and held issues are dropped."
+    }
+  }
+]
