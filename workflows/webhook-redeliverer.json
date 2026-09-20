@@ -1,0 +1,686 @@
+[
+  {
+    "updatedAt": "2026-09-20T14:26:48.087Z",
+    "createdAt": "2026-09-20T14:20:38.949Z",
+    "id": "fwgg4uJ0WadYgDyz",
+    "name": "Webhook Redeliverer (failed GitHub deliveries)",
+    "description": "C8 (#35): every 2 min, find repo-hook deliveries to the ingress that failed (non-2xx, e.g. Funnel 502) in the last hour and ask GitHub to redeliver them once. Reconciliation for the event path; no model call.",
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "id": "e2e1e7c2-3ab4-4e92-87a6-5ce400a0c83a",
+        "name": "Every 2 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 2
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "5e7f0649-8a46-4be0-abcf-0233d0058e6d",
+        "name": "Installed Repos",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          224,
+          0
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.github.com/installation/repositories?per_page=100",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "935c5bb2-bd7a-41b2-8071-278e707b9b86",
+        "name": "One Item Per Repo",
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [
+          440,
+          200
+        ],
+        "parameters": {
+          "fieldToSplitOut": "repositories",
+          "options": {}
+        }
+      },
+      {
+        "id": "c073be8c-c09d-4bff-abd4-d474df771803",
+        "name": "Active Repos Only",
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.2,
+        "position": [
+          660,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.archived }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "8aa663d9-1412-44c6-b917-f055b0938cd3",
+        "name": "Repo Hooks",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.github.com/repos/{{ $json.full_name }}/hooks",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "d62fccc2-cd52-444f-812d-20d5bb770084",
+        "name": "Recent Deliveries",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1320,
+          200
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.github.com/repos/{{ $json.repo }}/hooks/{{ $json.hook_id }}/deliveries?per_page=30",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "a2a9f905-c9a6-416f-9350-4aefc4cc99fb",
+        "name": "Already Redelivered",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          1760,
+          200
+        ],
+        "parameters": {
+          "operation": "get",
+          "propertyName": "done",
+          "key": "=redelivered:{{ $json.delivery_id }}",
+          "keyType": "string",
+          "options": {}
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "5bd616ed-75b1-4c1e-9610-c01320b1619c",
+        "name": "Not Yet",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1980,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.done }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "empty",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "f36b2040-b798-4d98-9f74-c61d915c85d4",
+        "name": "Redeliver",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2200,
+          100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.github.com/repos/{{ $('Delivery Coordinates').item.json.repo }}/hooks/{{ $('Delivery Coordinates').item.json.hook_id }}/deliveries/{{ $('Delivery Coordinates').item.json.delivery_id }}/attempts",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "518d4020-f3a9-4df7-9fd2-929f44868bdc",
+        "name": "Mark Redelivered",
+        "type": "n8n-nodes-base.redis",
+        "typeVersion": 1,
+        "position": [
+          2420,
+          100
+        ],
+        "parameters": {
+          "operation": "set",
+          "key": "=redelivered:{{ $('Delivery Coordinates').item.json.delivery_id }}",
+          "value": "={{ $now.toISO() }}",
+          "keyType": "string",
+          "expire": true,
+          "ttl": 86400
+        },
+        "credentials": {
+          "redis": {
+            "id": "redisLocalQueue1",
+            "name": "Redis (local triage queue)"
+          }
+        }
+      },
+      {
+        "id": "9d63e3fb-95db-4cc0-a22e-fcfeaa42ef47",
+        "name": "Skip",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          2200,
+          320
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "bb51d9a4-39c1-4125-8de4-568cd5cf499f",
+        "name": "Notes",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          0,
+          -60
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 1400,
+          "height": 200,
+          "content": "## Webhook Redeliverer (C8 #35)\n\nGitHub never retries a webhook. The Tailscale Funnel ingress occasionally answers 502 (\"failed to connect to host\") before the request reaches this Mac, so every 2 min this lists each repo's pipeline hook deliveries, picks the non-2xx ones from the last hour that were not already redeliveries, and asks GitHub to redeliver each exactly once (Redis key redelivered:{id}, 24 h). Reconciliation for the event path; the poller and the 5-minute merge sweep remain the deeper backups."
+        }
+      },
+      {
+        "id": "5cdb7801-6fbe-465c-b67b-d6c9934d8138",
+        "name": "Pipeline Hooks Only",
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.2,
+        "position": [
+          1100,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.config.url }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "contains"
+                },
+                "rightValue": "github-issue-triage"
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "7c8dc3d1-81a0-4d6f-a965-4784cda40845",
+        "name": "Hook Coordinates",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1210,
+          200
+        ],
+        "parameters": {
+          "mode": "manual",
+          "includeOtherFields": false,
+          "assignments": {
+            "assignments": [
+              {
+                "id": "repo",
+                "name": "repo",
+                "type": "string",
+                "value": "={{ $('Active Repos Only').item.json.full_name }}"
+              },
+              {
+                "id": "hook",
+                "name": "hook_id",
+                "type": "number",
+                "value": "={{ $json.id }}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "2feab909-ba34-4a5f-ac91-f3d4d792a800",
+        "name": "Failed Recent Deliveries",
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.2,
+        "position": [
+          1540,
+          200
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ Number($json.status_code || 0) < 200 || Number($json.status_code || 0) >= 300 }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              },
+              {
+                "leftValue": "={{ $json.redelivery }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false",
+                  "singleValue": true
+                }
+              },
+              {
+                "leftValue": "={{ Date.parse($json.delivered_at || 0) >= Date.now() - 3600000 }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "1384326e-be76-40b3-962b-0e11c1196f95",
+        "name": "Delivery Coordinates",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1650,
+          200
+        ],
+        "parameters": {
+          "mode": "manual",
+          "includeOtherFields": false,
+          "assignments": {
+            "assignments": [
+              {
+                "id": "repo",
+                "name": "repo",
+                "type": "string",
+                "value": "={{ $('Hook Coordinates').item.json.repo }}"
+              },
+              {
+                "id": "hook",
+                "name": "hook_id",
+                "type": "number",
+                "value": "={{ $('Hook Coordinates').item.json.hook_id }}"
+              },
+              {
+                "id": "did",
+                "name": "delivery_id",
+                "type": "number",
+                "value": "={{ $json.id }}"
+              },
+              {
+                "id": "ev",
+                "name": "event",
+                "type": "string",
+                "value": "={{ $json.event }}"
+              },
+              {
+                "id": "sc",
+                "name": "status_code",
+                "type": "number",
+                "value": "={{ $json.status_code }}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      }
+    ],
+    "connections": {
+      "Every 2 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Installed Repos",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Installed Repos": {
+        "main": [
+          [
+            {
+              "node": "One Item Per Repo",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "One Item Per Repo": {
+        "main": [
+          [
+            {
+              "node": "Active Repos Only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Active Repos Only": {
+        "main": [
+          [
+            {
+              "node": "Repo Hooks",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Already Redelivered": {
+        "main": [
+          [
+            {
+              "node": "Not Yet",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Not Yet": {
+        "main": [
+          [
+            {
+              "node": "Redeliver",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Skip",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Redeliver": {
+        "main": [
+          [
+            {
+              "node": "Mark Redelivered",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Repo Hooks": {
+        "main": [
+          [
+            {
+              "node": "Pipeline Hooks Only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pipeline Hooks Only": {
+        "main": [
+          [
+            {
+              "node": "Hook Coordinates",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Hook Coordinates": {
+        "main": [
+          [
+            {
+              "node": "Recent Deliveries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Recent Deliveries": {
+        "main": [
+          [
+            {
+              "node": "Failed Recent Deliveries",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Failed Recent Deliveries": {
+        "main": [
+          [
+            {
+              "node": "Delivery Coordinates",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Delivery Coordinates": {
+        "main": [
+          [
+            {
+              "node": "Already Redelivered",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "availableInMCP": true,
+      "saveDataErrorExecution": "all",
+      "saveDataSuccessExecution": "all"
+    },
+    "staticData": {
+      "node:Every 2 Minutes": {
+        "recurrenceRules": [
+          null
+        ],
+        "recurrenceRuleSignatures": [
+          null
+        ]
+      }
+    },
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
+    "nodeGroups": [],
+    "pinData": null,
+    "versionId": "5761acf6-f90e-4182-82f9-9a32c0cd39ce",
+    "activeVersionId": "5761acf6-f90e-4182-82f9-9a32c0cd39ce",
+    "versionCounter": 3,
+    "triggerCount": 1,
+    "sourceWorkflowId": null,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-09-20T14:20:38.951Z",
+        "createdAt": "2026-09-20T14:20:38.951Z",
+        "role": "workflow:owner",
+        "workflowId": "fwgg4uJ0WadYgDyz",
+        "projectId": "kbxEhpIE8mw6KCCA",
+        "project": {
+          "updatedAt": "2026-09-12T22:56:00.120Z",
+          "createdAt": "2026-08-23T06:40:56.864Z",
+          "id": "kbxEhpIE8mw6KCCA",
+          "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "customTelemetryTags": [],
+          "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": "C8: pair repos, hooks and deliveries via item lineage instead of index",
+      "description": "Added nodes: Pipeline Hooks Only, Hook Coordinates, Failed Recent Deliveries, Delivery Coordinates\nRemoved nodes: Pipeline Hook, Failed In Last Hour\nUpdated nodes: Redeliver, Mark Redelivered\nConnections: 6 added, 4 removed"
+    }
+  }
+]

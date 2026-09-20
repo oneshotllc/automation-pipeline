@@ -1,10 +1,10 @@
 [
   {
-    "updatedAt": "2026-09-20T05:26:28.410Z",
+    "updatedAt": "2026-09-20T14:26:33.129Z",
     "createdAt": "2026-09-20T05:26:28.410Z",
     "id": "approvedPrMerger01",
     "name": "Approved PR Merger",
-    "description": "C8 merge stage, brought forward 2026-09-20 (.github#35): every 5 min find open PRs in oneshotllc that Brian approved and that GitHub reports mergeable_state=clean, and squash-merge them as the bot. Deterministic; no model call.",
+    "description": "C8/C9 merge stage: human-approved PRs merge when clean (event + 5-min sweep); Dependabot PRs are pre-approved by policy: bot approves and squash-merges when every check run is green.",
     "active": true,
     "isArchived": false,
     "nodes": [
@@ -169,6 +169,14 @@
                   "operation": "equals"
                 },
                 "rightValue": "open"
+              },
+              {
+                "leftValue": "={{ $json.user.login }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                },
+                "rightValue": "dependabot[bot]"
               }
             ],
             "combinator": "and"
@@ -212,7 +220,8 @@
             "id": "ghAppOneshotPr01",
             "name": "GitHub App - oneshot-pr-bot"
           }
-        }
+        },
+        "onError": "continueErrorOutput"
       },
       {
         "id": "392817c5-0e07-4e6e-aae5-f3e8aeb70d5a",
@@ -238,8 +247,342 @@
           "color": 4,
           "width": 1500,
           "height": 220,
-          "content": "## Approved PR Merger (C8 merge stage, .github#35; brought forward on Brian's request 2026-09-20)\n\nBrian's approval is the merge trigger (HumanApprovalGate@PR). Every 5 min: GitHub search `org:oneshotllc is:pr is:open review:approved` → fetch each PR → merge only when GitHub says `mergeable_state == clean` (required reviews + required checks satisfied, no conflicts, not draft) → squash-merge as oneshot-pr-bot with the head SHA pinned, so a push after approval cannot be merged unreviewed. Anything not clean is skipped this tick and retried next tick. A failed merge call is an error execution. No model call. Supersedes the per-repo `merge-sweep` cron workflows (.github#38)."
+          "content": "## Approved PR Merger (C8 #35, C9 #37)\n\n**Human-approved PRs (not Dependabot):** Brian's approval is the merge trigger. Search `review:approved` (sweep) or the ingress calls this on a `pull_request_review` approved event. Merge only when `mergeable_state == clean`; squash as oneshot-pr-bot with the head SHA pinned.\n\n**Dependabot PRs (policy, Brian 2026-09-20):** pre-approved, no human. Search `author:app/dependabot`. Open, not draft, mergeable, state blocked/clean/unstable -> fetch check runs and the base branch's required status contexts. Green means: every required context has a successful run; if the branch has no required contexts, at least one run exists and all are successful. Non-required jobs (old preview deploy / flag-major) do not block. Then the bot submits the APPROVE review itself (it is not the author, so protection accepts it) and squash-merges. A repo with no checks at all never auto-merges: nothing was tested.\n\nNo model call anywhere here. Failed API calls are error executions. Runs every 5 min plus on every approval event."
         }
+      },
+      {
+        "id": "5038e9af-63fb-40c3-8ea5-6add74a0d91e",
+        "name": "When Executed by Another Workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          660,
+          420
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "ba2f2685-5ed8-4894-952f-b4c48d0de241",
+        "name": "Find Dependabot PRs",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          220,
+          420
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.github.com/search/issues?q=org%3Aoneshotllc+is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot+draft%3Afalse&per_page=50",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "b61c1fca-1cfe-40d9-a4d9-43d40befc8c8",
+        "name": "One Item Per Dependabot PR",
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [
+          440,
+          420
+        ],
+        "parameters": {
+          "fieldToSplitOut": "items",
+          "options": {}
+        }
+      },
+      {
+        "id": "42ed0d27-07a7-42aa-ad6a-60d9b3f00187",
+        "name": "Dependabot Awaiting Review",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1320,
+          420
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.user.login }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                },
+                "rightValue": "dependabot[bot]"
+              },
+              {
+                "leftValue": "={{ $json.state }}",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                },
+                "rightValue": "open"
+              },
+              {
+                "leftValue": "={{ $json.draft }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false",
+                  "singleValue": true
+                }
+              },
+              {
+                "leftValue": "={{ $json.mergeable }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              },
+              {
+                "leftValue": "={{ ['blocked','clean','unstable'].includes($json.mergeable_state) }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "435706ac-100f-4616-bbb1-c338959c5d3b",
+        "name": "Check Runs",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1540,
+          420
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.github.com/repos/{{ $json.base.repo.owner.login }}/{{ $json.base.repo.name }}/commits/{{ $json.head.sha }}/check-runs?per_page=100",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "83f82a2b-4638-4c5f-b7ee-07e985533616",
+        "name": "All Checks Green",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1760,
+          420
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ (() => { const runs = $('Check Runs').item.json.check_runs || []; const req = Array.isArray($json.contexts) ? $json.contexts : []; const ok = c => c.status === 'completed' && ['success','skipped','neutral'].includes(c.conclusion); if (req.length) { return req.every(name => runs.some(c => c.name === name && ok(c))); } return runs.length > 0 && runs.every(ok); })() }}",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "id": "7ed985b5-ddf8-4dd2-81d9-dabfc852e630",
+        "name": "Bot Approves Dependabot PR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1980,
+          420
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.github.com/repos/{{ $('Get PR').item.json.base.repo.owner.login }}/{{ $('Get PR').item.json.base.repo.name }}/pulls/{{ $('Get PR').item.json.number }}/reviews",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ event: 'APPROVE', body: 'Dependabot PR: pre-approved by policy (Brian, 2026-09-20). All ' + ($('Check Runs').item.json.check_runs || []).length + ' check runs green; merging.' }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "38706683-5350-4d58-9e8e-d3c5f809e85f",
+        "name": "Squash Merge Dependabot PR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2200,
+          420
+        ],
+        "parameters": {
+          "method": "PUT",
+          "url": "=https://api.github.com/repos/{{ $('Get PR').item.json.base.repo.owner.login }}/{{ $('Get PR').item.json.base.repo.name }}/pulls/{{ $('Get PR').item.json.number }}/merge",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ merge_method: 'squash', sha: $('Get PR').item.json.head.sha, commit_title: $('Get PR').item.json.title + ' (#' + $('Get PR').item.json.number + ')' }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        },
+        "onError": "continueErrorOutput"
+      },
+      {
+        "id": "df0efe76-f699-49a7-8933-b90a5661e301",
+        "name": "Checks Not Green",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1980,
+          600
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "87be6137-6c18-4233-8a65-2d2e9f14d3be",
+        "name": "Required Contexts",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1650,
+          420
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.github.com/repos/{{ $('Get PR').item.json.base.repo.owner.login }}/{{ $('Get PR').item.json.base.repo.name }}/branches/{{ $('Get PR').item.json.base.ref }}/protection/required_status_checks",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "githubAppApi",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.github+json"
+              },
+              {
+                "name": "X-GitHub-Api-Version",
+                "value": "2022-11-28"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            }
+          }
+        },
+        "credentials": {
+          "githubAppApi": {
+            "id": "ghAppOneshotPr01",
+            "name": "GitHub App - oneshot-pr-bot"
+          }
+        }
+      },
+      {
+        "id": "2c386e4c-9f53-4eb4-8655-dc92043205c4",
+        "name": "Merge Failed, Retry Next Tick",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          2420,
+          560
+        ],
+        "parameters": {}
       }
     ],
     "connections": {
@@ -248,6 +591,11 @@
           [
             {
               "node": "Find Approved Open PRs",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Find Dependabot PRs",
               "type": "main",
               "index": 0
             }
@@ -309,7 +657,133 @@
           ],
           [
             {
+              "node": "Dependabot Awaiting Review",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Get PR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Dependabot PRs": {
+        "main": [
+          [
+            {
+              "node": "One Item Per Dependabot PR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "One Item Per Dependabot PR": {
+        "main": [
+          [
+            {
+              "node": "Derive Coordinates",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dependabot Awaiting Review": {
+        "main": [
+          [
+            {
+              "node": "Check Runs",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
               "node": "Not Ready",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "All Checks Green": {
+        "main": [
+          [
+            {
+              "node": "Bot Approves Dependabot PR",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Checks Not Green",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Bot Approves Dependabot PR": {
+        "main": [
+          [
+            {
+              "node": "Squash Merge Dependabot PR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Runs": {
+        "main": [
+          [
+            {
+              "node": "Required Contexts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Required Contexts": {
+        "main": [
+          [
+            {
+              "node": "All Checks Green",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Squash Merge Dependabot PR": {
+        "main": [
+          null,
+          [
+            {
+              "node": "Merge Failed, Retry Next Tick",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Squash Merge": {
+        "main": [
+          null,
+          [
+            {
+              "node": "Merge Failed, Retry Next Tick",
               "type": "main",
               "index": 0
             }
@@ -321,7 +795,8 @@
       "executionOrder": "v1",
       "availableInMCP": true,
       "saveDataSuccessExecution": "all",
-      "saveDataErrorExecution": "all"
+      "saveDataErrorExecution": "all",
+      "callerPolicy": "workflowsFromSameOwner"
     },
     "staticData": {
       "node:Every 5 Minutes": {
@@ -333,12 +808,15 @@
         ]
       }
     },
-    "meta": null,
+    "meta": {
+      "aiBuilderAssisted": true,
+      "builderVariant": "mcp"
+    },
     "nodeGroups": [],
     "pinData": {},
-    "versionId": "70c02013-a602-44e4-af48-86899464d4ef",
-    "activeVersionId": "70c02013-a602-44e4-af48-86899464d4ef",
-    "versionCounter": 1,
+    "versionId": "8f8434cf-03fb-4cd1-8cc8-5467aba71245",
+    "activeVersionId": "8f8434cf-03fb-4cd1-8cc8-5467aba71245",
+    "versionCounter": 5,
     "triggerCount": 1,
     "sourceWorkflowId": null,
     "tags": [],
@@ -363,8 +841,8 @@
       }
     ],
     "versionMetadata": {
-      "name": null,
-      "description": null
+      "name": "C9: one failed merge no longer aborts the tick (error output, retried next tick)",
+      "description": "Added nodes: Merge Failed, Retry Next Tick\nConnections: 2 added, 0 removed"
     }
   }
 ]
