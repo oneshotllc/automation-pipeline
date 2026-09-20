@@ -1,0 +1,728 @@
+{
+  "id": "d59YY3F06IEMKLWh",
+  "name": "Webhook Ingress",
+  "description": "Signature-verified GitHub webhook ingress. Normalizes events into the intake envelope, routes approving reviews to the merger immediately and everything else to the intake queue. Config-driven.",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-issue-triage",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "f5f9f383-d63f-4e27-b383-c2be43147288",
+      "name": "Triage Intake",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        112
+      ],
+      "webhookId": "f7b28248-24da-4672-8f35-01be6f74c078"
+    },
+    {
+      "id": "231ef67f-1924-4969-a48b-179ce6ca2d75",
+      "name": "Enqueue To Redis Queue",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "list": "={{ $('Config').first().json.queues.intake }}",
+        "messageData": "={{ $json.payload }}",
+        "operation": "push",
+        "tail": false
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "1946af21-4fb1-49cb-9eeb-0f10ef32c739",
+      "name": "Get Webhook Secret",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        220,
+        112
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "secret",
+        "key": "={{ $('Config').first().json.keys.webhook_secret }}",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "57333633-7da0-4d39-b7f5-4498eaeec7fc",
+      "name": "Verify Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// C4 (.github#31): HMAC-SHA256 of the RAW body vs x-hub-signature-256. Fail closed.\nconst crypto = require('crypto');\nconst secret = String($json.secret || '');\nconst hook = $('Triage Intake').item;\nconst headers = hook.json.headers || {};\nconst sent = String(headers['x-hub-signature-256'] || '');\nlet raw = '';\ntry { raw = Buffer.from(hook.binary.data.data, 'base64').toString('utf8'); }\ncatch (e) { raw = typeof hook.json.body === 'string' ? hook.json.body : JSON.stringify(hook.json.body || {}); }\nlet ok = false, why = '';\nif (!secret) why = 'cfg:gh_webhook_secret is not set';\nelse if (!sent.startsWith('sha256=')) why = 'missing or malformed x-hub-signature-256';\nelse {\n  const mine = 'sha256=' + crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('hex');\n  const a = Buffer.from(mine), b = Buffer.from(sent);\n  ok = a.length === b.length && crypto.timingSafeEqual(a, b);\n  if (!ok) why = 'signature mismatch';\n}\nlet body = hook.json.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }\nif (!body || typeof body !== 'object') { try { body = JSON.parse(raw); } catch (e) { body = {}; } }\nreturn { json: { __sig_ok: ok, __sig_why: why, headers, body } };"
+      }
+    },
+    {
+      "id": "3384a06e-8eec-4c7b-86d0-d5c82bcb8b57",
+      "name": "Signature Valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        112
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.__sig_ok }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "822f82cd-15e7-4fca-a407-204688d95561",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'invalid signature', detail: $json.__sig_why }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "a8865c8c-9aec-47b7-9a61-596746f1817d",
+      "name": "Normalize GitHub Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// The only node that knows what a GitHub payload looks like. Everything downstream reads this envelope.\nconst cfg = $('Config').first().json;\nconst headers = $json.headers || {};\nconst b = $json.body || {};\nconst event = String(headers['x-github-event'] || '');\nconst item = b.issue || b.pull_request || {};\nconst repo = b.repository || {};\nconst sender = b.sender || {};\nconst owner = (repo.owner && repo.owner.login) || (repo.full_name || '').split('/')[0] || '';\nconst name = repo.name || (repo.full_name || '').split('/')[1] || '';\nconst actor = sender.login || '';\nconst actorIsBot = sender.type === 'Bot' || /\\[bot\\]$/.test(actor) || (cfg.bots || []).includes(actor);\nconst labels = (item.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '').filter(Boolean);\nconst review = b.review || {};\nconst comment = b.comment || {};\nconst reviewer = (review.user && review.user.login) || (comment.user && comment.user.login) || '';\nconst pr = b.pull_request || {};\nconst headRef = (pr.head && pr.head.ref) || '';\nconst prefix = String((cfg.build && cfg.build.branch_prefix) || '');\nconst pipelineBranch = prefix && headRef.startsWith(prefix);\nconst linkedIssue = pipelineBranch ? Number(headRef.slice(prefix.length)) || 0 : 0;\nreturn { json: {\n  event, action: String(b.action || ''),\n  repository_owner: owner, repository_name: name, issue_number: Number(item.number || 0),\n  title: item.title == null ? '' : String(item.title), body: item.body == null ? '' : String(item.body),\n  labels, author: (item.user && item.user.login) || '', issue_url: item.html_url || '',\n  issue_state: item.state || '', actor, actor_is_bot: actorIsBot,\n  changed_label: (b.label && b.label.name) || '',\n  review_state: String(review.state || '').toLowerCase(), review_body: String(review.body || comment.body || ''), review_id: String(review.id || comment.id || ''), reviewer,\n  reviewer_is_approver: (cfg.approvers || []).includes(reviewer),\n  pr_merged: pr.merged === true, head_ref: headRef, pipeline_branch: pipelineBranch, linked_issue: linkedIssue,\n  admitted_event: (cfg.ingress.events || []).includes(event),\n  delivery_id: 'webhook:' + String(headers['x-github-delivery'] || '') } };"
+      }
+    },
+    {
+      "id": "0669a1aa-4cff-4548-b075-1c30e56f5e2f",
+      "name": "Admit",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.admitted_event }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ ['opened','reopened','edited','labeled','unlabeled','synchronize','ready_for_review','submitted','created','closed'].includes($json.action) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ !$json.actor_is_bot || ['opened','reopened','closed'].includes($json.action) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.issue_number }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "055bdd78-2f7a-4202-bdd2-4410982bfdc1",
+      "name": "Build Intake Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Same shape the poller produces, so the sorter and consumer cannot tell the two ingress paths apart.\nconst e = $json;\nconst item = { delivery_id: e.delivery_id, repository_owner: e.repository_owner, repository_name: e.repository_name, issue_number: e.issue_number, title: e.title, body: e.body, labels: e.labels, author: e.author, issue_url: e.issue_url };\nreturn { json: { item, payload: JSON.stringify(item) } };"
+      }
+    },
+    {
+      "id": "a0c11d74-2833-4044-9a18-6ab7633a8640",
+      "name": "Respond 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        112
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"accepted\":true}",
+        "options": {
+          "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "4bbd0f03-bb8d-4767-bf84-1b89ac945c6e",
+      "name": "Dropped",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "47b72ab9-fa03-4e15-83bb-39c8faad7a3b",
+      "name": "Ingress Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -220
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 1900,
+        "height": 280,
+        "content": "## Webhook Ingress\n\nMechanics only; names come from the config key. The webhook secret is read from the configured Redis key at request time and is never stored in this workflow.\n\nVerify the HMAC signature of the raw body (401 on mismatch, fail-closed when the secret is unset). Normalize the GitHub payload into the intake envelope. Admit only configured events; bot actors are admitted for opened/reopened/closed only so the pipeline's own label edits cannot loop.\n\nRouting after admission, in order: a merged pull request on a pipeline branch labels its issue shipped; review feedback from a configured approver on a pipeline PR becomes a feedback item on the intake queue (stage feedback, targeting the issue; the sorter sends it straight to the build queue); an approving review by an approver calls the merger immediately; everything else is pushed to the intake queue in the poller's item shape."
+      }
+    },
+    {
+      "id": "f37e773b-a019-4064-9d0a-79b5c13548a1",
+      "name": "Is Approval",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.event === 'pull_request_review' && $json.review_state === 'approved' && $json.reviewer_is_approver }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "71a37155-a4c8-4378-a94f-8ac30f988d09",
+      "name": "Merge Approved PR",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1650,
+        -260
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "approvedPrMerger01"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "workflowInputs": {
+          "mappingMode": "passThrough"
+        }
+      }
+    },
+    {
+      "id": "a5e907fa-2b13-478f-a058-d7334a11514d",
+      "name": "Merge Coordinates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1430,
+        -260
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Shape the merger's sub-workflow input exactly like its own 'Derive Coordinates' output.\nreturn { json: { owner: $json.repository_owner, repo: $json.repository_name, number: $json.issue_number, title: $json.title, html_url: $json.issue_url, via: 'webhook:' + $json.reviewer } };"
+      }
+    },
+    {
+      "id": "787a4984-aa24-4080-816b-683082ae45d8",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        110,
+        112
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cfg",
+        "key": "cfg:pipeline",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "f3791773-a8c4-4048-98ac-a9d8eb0192f7",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        165,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
+      }
+    },
+    {
+      "id": "718adc26-ec6d-4e60-b685-d54251cd97c2",
+      "name": "Is Merged Pipeline PR",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.event === 'pull_request' && $json.action === 'closed' && $json.pr_merged && $json.pipeline_branch && $json.linked_issue > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "7b22303a-8d6b-49b8-a49f-b219d81c7c41",
+      "name": "Label Issue Shipped",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $json.repository_owner }}/{{ $json.repository_name }}/issues/{{ $json.linked_issue }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: [ $('Config').first().json.labels.shipped ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "bcbe264a-2f0b-45f7-b30e-a92dd939b20a",
+      "name": "Is Review Feedback",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const cfg = $('Config').first().json; const states = (cfg.feedback && cfg.feedback.review_states) || []; const isReview = $json.event === 'pull_request_review' && states.includes($json.review_state) && $json.review_body.trim().length > 0; const isComment = $json.event === 'pull_request_review_comment' && $json.action === 'created'; return $json.pipeline_branch && $json.linked_issue > 0 && $json.reviewer_is_approver && (isReview || isComment); })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "053af689-bcf0-42cf-b4fa-d5e27fe142ad",
+      "name": "Build Feedback Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -140
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// A feedback item targets the ISSUE the PR was built for; the branch is derived from it downstream.\nconst e = $json;\nconst item = { delivery_id: e.delivery_id, repository_owner: e.repository_owner, repository_name: e.repository_name, issue_number: e.linked_issue, pr_number: e.issue_number, stage: 'feedback', feedback_id: e.review_id, title: e.title, body: '', labels: [], author: e.reviewer, issue_url: e.issue_url };\nreturn { json: { item, payload: JSON.stringify(item) } };"
+      }
+    }
+  ],
+  "connections": {
+    "Get Webhook Secret": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [
+          {
+            "node": "Signature Valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid": {
+      "main": [
+        [
+          {
+            "node": "Normalize GitHub Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize GitHub Event": {
+      "main": [
+        [
+          {
+            "node": "Admit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Admit": {
+      "main": [
+        [
+          {
+            "node": "Is Merged Pipeline PR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dropped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Intake Item": {
+      "main": [
+        [
+          {
+            "node": "Enqueue To Redis Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enqueue To Redis Queue": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dropped": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Approval": {
+      "main": [
+        [
+          {
+            "node": "Merge Coordinates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Coordinates": {
+      "main": [
+        [
+          {
+            "node": "Merge Approved PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Approved PR": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage Intake": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Webhook Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Merged Pipeline PR": {
+      "main": [
+        [
+          {
+            "node": "Label Issue Shipped",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Review Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Issue Shipped": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Review Feedback": {
+      "main": [
+        [
+          {
+            "node": "Build Feedback Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Feedback Item": {
+      "main": [
+        [
+          {
+            "node": "Enqueue To Redis Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": []
+}

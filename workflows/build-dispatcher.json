@@ -1,0 +1,530 @@
+{
+  "id": "3zS0ikpHmlLbf3Um",
+  "name": "Build Dispatcher",
+  "description": "Pops each configured stream's build queue, skips items that already have an open PR on their deterministic branch, and dispatches the configured build workflow on the configured runner. Config-driven; no model call.",
+  "active": true,
+  "nodes": [
+    {
+      "id": "d75ecfdf-1aac-433a-8c5c-8a1bb13151e5",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "f2262c1a-9c26-4e5d-91c5-a6f18011c4ce",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cfg",
+        "key": "cfg:pipeline",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "74280297-6668-4c69-b4c2-5cf94c90d32d",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
+      }
+    },
+    {
+      "id": "f7d2c8f0-f67d-4cbd-8388-cfc2ad162a9e",
+      "name": "Stream Build Queues",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const cfg = $input.first().json;\nconst names = new Set([cfg.streams.default, ...((cfg.streams.rules || []).map(r => r.stream))].filter(Boolean));\nreturn [...names].map(s => ({ json: { stream: s, list: cfg.queues.build_prefix + s } }));"
+      }
+    },
+    {
+      "id": "e3d70152-4f4a-4c68-ab23-90e90e9fd6fa",
+      "name": "Pop Build Item",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "operation": "pop",
+        "list": "={{ $json.list }}",
+        "tail": true,
+        "propertyName": "item",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "7ee6307f-e111-4af5-ab9e-35a89e4b0a9b",
+      "name": "Had Item",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.item }}",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "4e3aea10-bf47-44f6-8aff-fc337c202937",
+      "name": "Queue Empty",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        360
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "88686998-ca2e-43eb-91a9-d6ea9d82e710",
+      "name": "Dispatch Inputs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const cfg = $('Config').first().json;\nconst it = $json.item;\nconst repo = `${it.repository_owner}/${it.repository_name}`;\nconst branch = cfg.build.branch_prefix + it.issue_number;\nconst mode = it.stage === 'feedback' ? 'feedback' : 'build';\nreturn { json: { repo, owner: it.repository_owner, name: it.repository_name, issue: it.issue_number, branch, mode,\n  dispatch_repo: cfg.build.dispatch_repo, workflow_file: cfg.build.workflow_file, ref: cfg.build.ref,\n  inputs: { repo, issue: String(it.issue_number), branch, hold_label: cfg.labels.hold, pr_open_label: cfg.labels.pr_open, reviewers: (cfg.approvers || []).join(','), runner_label: cfg.build.runner_label, spec_sentinel: cfg.spec.sentinel, agent: cfg.build.agent, mode } } };"
+      }
+    },
+    {
+      "id": "ff7143a8-22cf-4b66-bef0-378aba6459aa",
+      "name": "Existing PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.repo }}/pulls?state=open&head={{ $json.owner }}:{{ $json.branch }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "6714c4f8-b0c1-46f0-830d-0b2d2228d10e",
+      "name": "PR State Matches Mode",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Dispatch Inputs').item.json.mode === 'feedback' ? (Array.isArray($json.body) && $json.body.length > 0) : (Array.isArray($json.body) && $json.body.length === 0) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2d4108e3-8c8b-4064-9316-a5fbc3d9465e",
+      "name": "Dispatch Build",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Dispatch Inputs').item.json.dispatch_repo }}/actions/workflows/{{ $('Dispatch Inputs').item.json.workflow_file }}/dispatches",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: $('Dispatch Inputs').item.json.ref, inputs: $('Dispatch Inputs').item.json.inputs }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "2feecef5-824b-4340-bc28-afc37c728457",
+      "name": "Note On Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Dispatch Inputs').item.json.repo }}/issues/{{ $('Dispatch Inputs').item.json.issue }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: ($('Dispatch Inputs').item.json.mode === 'feedback' ? 'Feedback build dispatched on branch `' : 'Build dispatched on branch `') + $('Dispatch Inputs').item.json.branch + '`. The run reports back when it finishes.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "680003d6-a1ab-412f-94c9-12c6aeac6483",
+      "name": "Wrong PR State For Mode",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        240
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ffdc2d6b-db37-458e-8c94-75e806c4c3b2",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -80
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 1400,
+        "height": 200,
+        "content": "## Build Dispatcher\n\nMechanics only; names come from the config key. Each tick: one pop per configured stream's build queue. The branch is a pure function of the issue (`build.branch_prefix` + number). Mode `build` requires that no open PR exists on that branch; mode `feedback` (review comments on a pipeline PR) requires that one does. The configured build workflow is dispatched in the configured repository with every value it needs as inputs, a note is left on the issue, and a failed dispatch call puts the item back on the queue. The build run itself re-reads approval before writing anything."
+      }
+    },
+    {
+      "id": "ac6e3948-fd29-434b-b4fd-f55b017e5258",
+      "name": "Requeue Item",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "operation": "push",
+        "list": "={{ $('Stream Build Queues').item.json.list }}",
+        "messageData": "={{ JSON.stringify($('Pop Build Item').item.json.item) }}",
+        "tail": true
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "f1f2cc51-f39e-498d-bdb5-00c4d6c1cf0d",
+      "name": "Dispatch Failed",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        200
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "=dispatch failed for {{ $('Dispatch Inputs').item.json.repo }}#{{ $('Dispatch Inputs').item.json.issue }}; item requeued for the next tick"
+      }
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Stream Build Queues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stream Build Queues": {
+      "main": [
+        [
+          {
+            "node": "Pop Build Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pop Build Item": {
+      "main": [
+        [
+          {
+            "node": "Had Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Had Item": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Empty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Inputs": {
+      "main": [
+        [
+          {
+            "node": "Existing PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existing PR": {
+      "main": [
+        [
+          {
+            "node": "PR State Matches Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Build": {
+      "main": [
+        [
+          {
+            "node": "Note On Issue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Requeue Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requeue Item": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PR State Matches Mode": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Build",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wrong PR State For Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": []
+}

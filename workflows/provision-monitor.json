@@ -1,11 +1,8 @@
 {
-  "updatedAt": "2026-09-19T19:49:12.685Z",
-  "createdAt": "2026-09-16T00:58:43.517Z",
   "id": "JphUDyra2G4u2XFd",
-  "name": "OneShot Provision Monitor",
-  "description": "Polls oneshotllc/.github Actions runs every minute and checks oneshot.help reachability, so provisioning activity and logs are visible in n8n. Repointed from oneshotmn in C4 (.github#31).",
+  "name": "Provision Monitor",
+  "description": "Polls the configured repository's Actions runs and the configured site's reachability. Config-driven; no model call.",
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -29,7 +26,7 @@
     },
     {
       "parameters": {
-        "url": "https://api.github.com/repos/oneshotllc/.github/actions/runs",
+        "url": "=https://api.github.com/repos/{{ $('Config').first().json.monitor.actions_repo }}/actions/runs",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "githubAppApi",
         "sendQuery": true,
@@ -100,7 +97,7 @@
     },
     {
       "parameters": {
-        "url": "https://oneshot.help/",
+        "url": "={{ $('Config').first().json.monitor.site_url }}",
         "options": {
           "redirect": {
             "redirect": {}
@@ -127,7 +124,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const r = $input.first().json;\nconst code = r.statusCode || 0;\nconst body = typeof r.body === 'string' ? r.body : '';\nconst isWordPress = body.includes('wp-content') || body.includes('wp-includes');\nreturn [{ json: {\n  site_url: 'https://oneshot.help/',\n  http_status: code,\n  reachable: code >= 200 && code < 400,\n  looks_like_wordpress: isWordPress,\n  checked_at: new Date().toISOString(),\n  note: 'Checked from the n8n host on the Mac Studio, not from a public runner.'\n} }];"
+        "jsCode": "const r = $input.first().json;\nconst code = r.statusCode || 0;\nconst body = typeof r.body === 'string' ? r.body : '';\nreturn [{ json: {\n  site_url: $('Config').first().json.monitor.site_url,\n  http_status: code,\n  reachable: code >= 200 && code < 400,\n  looks_like_wordpress: body.includes('wp-content') || body.includes('wp-includes'),\n  checked_at: new Date().toISOString(),\n  note: 'Checked from the pipeline host, a reachability signal only.'\n} }];"
       },
       "id": "c4ad4490-cbd7-4d63-a05f-88f6b87c95d8",
       "name": "Summarize Site Health",
@@ -140,7 +137,7 @@
     },
     {
       "parameters": {
-        "content": "## OneShot Provision Monitor\n\nPolls the org .github repo every minute for Actions runs, and checks whether oneshot.help is serving.\n\nOpen any execution to read the full run log. The `runs` array carries one row per workflow run with a direct `logs_url` into GitHub.\n\nThe site check runs from this Mac, so it is a reachability signal only, not proof a visitor can load the site.",
+        "content": "## Provision Monitor\n\nMechanics only; targets come from the config key (`monitor.actions_repo`, `monitor.site_url`). Polls the configured repo's Actions runs and checks the configured site's reachability so provisioning activity and logs are visible here.",
         "height": 200,
         "width": 300,
         "color": 4
@@ -153,25 +150,47 @@
         -288,
         -224
       ]
+    },
+    {
+      "id": "e1076083-ab8f-41cf-af83-fb1cab1197d2",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        80,
+        96
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cfg",
+        "key": "cfg:pipeline",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "7722e4cc-e90f-4a4c-a7c2-818c242b2c90",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        150,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
+      }
     }
   ],
   "connections": {
-    "Poll Every Minute": {
-      "main": [
-        [
-          {
-            "node": "Fetch Workflow Runs",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Check Site Health",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Fetch Workflow Runs": {
       "main": [
         [
@@ -215,6 +234,44 @@
           }
         ]
       ]
+    },
+    "Poll Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch Workflow Runs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Site Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -222,50 +279,9 @@
     "availableInMCP": true,
     "binaryMode": "separate"
   },
-  "staticData": {
-    "node:Poll Every Minute": {
-      "recurrenceRules": [
-        null
-      ],
-      "recurrenceRuleSignatures": [
-        null
-      ]
-    }
-  },
   "meta": {
     "aiBuilderAssisted": true,
     "builderVariant": "mcp"
   },
-  "nodeGroups": [],
-  "pinData": {},
-  "versionId": "4c9cde7d-b24b-4106-a10f-4ff8f3194bdb",
-  "activeVersionId": "4c9cde7d-b24b-4106-a10f-4ff8f3194bdb",
-  "versionCounter": 4,
-  "triggerCount": 1,
-  "sourceWorkflowId": null,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-09-16T00:58:43.519Z",
-      "createdAt": "2026-09-16T00:58:43.519Z",
-      "role": "workflow:owner",
-      "workflowId": "JphUDyra2G4u2XFd",
-      "projectId": "kbxEhpIE8mw6KCCA",
-      "project": {
-        "updatedAt": "2026-09-12T22:56:00.120Z",
-        "createdAt": "2026-08-23T06:40:56.864Z",
-        "id": "kbxEhpIE8mw6KCCA",
-        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "customTelemetryTags": [],
-        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "C4: repoint Actions poll to oneshotllc/.github",
-    "description": "Updated nodes: Fetch Workflow Runs"
-  }
+  "nodeGroups": []
 }

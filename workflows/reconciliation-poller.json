@@ -1,11 +1,8 @@
 {
-  "updatedAt": "2026-09-19T19:14:53.450Z",
-  "createdAt": "2026-09-19T04:08:37.980Z",
   "id": "kQmdg9QLRiQq2CFz",
-  "name": "GitHub Issue Reconciliation Poller",
-  "description": "Every 5 min: list all oneshotllc repos, open issues and PRs, normalize, LPUSH to queue:intake. Dedup downstream via seen:{owner}/{repo}#{n}. GitHub list failures fail the run (C1, .github#28).",
+  "name": "Reconciliation Poller",
+  "description": "Backstop ingress: on a schedule, list every open issue and pull request in the configured org, normalize each into the intake item shape and push to the configured intake queue. Dedup happens downstream. Config-driven; no model call.",
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "id": "91f9a27c-6a01-4d44-927f-e1fa6bc90d23",
@@ -43,7 +40,7 @@
         "owner": {
           "__rl": true,
           "mode": "name",
-          "value": "oneshotllc"
+          "value": "={{ $('Config').first().json.org }}"
         },
         "returnAll": true
       },
@@ -71,7 +68,7 @@
         "owner": {
           "__rl": true,
           "mode": "name",
-          "value": "oneshotllc"
+          "value": "={{ $('Config').first().json.org }}"
         },
         "repository": {
           "__rl": true,
@@ -122,7 +119,7 @@
         "owner": {
           "__rl": true,
           "mode": "name",
-          "value": "oneshotllc"
+          "value": "={{ $('Config').first().json.org }}"
         },
         "repository": {
           "__rl": true,
@@ -168,7 +165,7 @@
         96
       ],
       "parameters": {
-        "list": "queue:intake",
+        "list": "={{ $('Config').first().json.queues.intake }}",
         "messageData": "={{ JSON.stringify($json) }}",
         "operation": "push",
         "tail": false
@@ -179,20 +176,47 @@
           "name": "Redis (local triage queue)"
         }
       }
+    },
+    {
+      "id": "46aa98e0-934a-4175-adec-93f19f14b201",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        110,
+        96
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cfg",
+        "key": "cfg:pipeline",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "619acc11-2394-4030-b23b-13a3131e6062",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        170,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
+      }
     }
   ],
   "connections": {
-    "Every 5 Minutes": {
-      "main": [
-        [
-          {
-            "node": "List Org Repositories",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "List Org Repositories": {
       "main": [
         [
@@ -252,56 +276,48 @@
           }
         ]
       ]
+    },
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "List Org Repositories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": true
   },
-  "staticData": {
-    "node:Every 5 Minutes": {
-      "recurrenceRules": [
-        null
-      ],
-      "recurrenceRuleSignatures": [
-        null
-      ]
-    }
-  },
   "meta": {
     "aiBuilderAssisted": true,
     "builderVariant": "mcp"
   },
-  "nodeGroups": [],
-  "pinData": null,
-  "versionId": "aae907b4-2761-40bd-b29d-e4796e05833e",
-  "activeVersionId": "aae907b4-2761-40bd-b29d-e4796e05833e",
-  "versionCounter": 3,
-  "triggerCount": 1,
-  "sourceWorkflowId": null,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-09-19T04:08:37.981Z",
-      "createdAt": "2026-09-19T04:08:37.981Z",
-      "role": "workflow:owner",
-      "workflowId": "kQmdg9QLRiQq2CFz",
-      "projectId": "kbxEhpIE8mw6KCCA",
-      "project": {
-        "updatedAt": "2026-09-12T22:56:00.120Z",
-        "createdAt": "2026-08-23T06:40:56.864Z",
-        "id": "kbxEhpIE8mw6KCCA",
-        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "customTelemetryTags": [],
-        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "C1: push to queue:intake; GitHub list errors stop the workflow",
-    "description": "oneshotllc/.github#28 scenarios 1 and 3: rename triage:queue -> queue:intake; remove onError=continueRegularOutput from List Open Issues and List Open Pull Requests."
-  }
+  "nodeGroups": []
 }

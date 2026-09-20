@@ -1,11 +1,8 @@
 {
-  "updatedAt": "2026-09-19T19:33:03.243Z",
-  "createdAt": "2026-09-19T05:51:20.508Z",
   "id": "8ukVVloMcWl0jMkz",
-  "name": "Redis Triage Consumer",
-  "description": "Stream consumer for oneshotllc: pops queue:oneshotllc, rejects items without stream, claims via INCR seen:{owner}/{repo}#{n}, generates the TDD/BDD spec via the Claude shim, posts it as an issue comment. Comment failures are error executions.",
+  "name": "Stream Consumer",
+  "description": "Pops each configured stream queue, claims the item, generates the specification comment through the model, posts it, applies the hold label and records the spec marker. Config-driven.",
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "id": "f16ca477-f460-400f-bcff-5b32ccca7cbb",
@@ -38,7 +35,7 @@
       ],
       "parameters": {
         "operation": "pop",
-        "list": "queue:oneshotllc",
+        "list": "={{ $json.list }}",
         "tail": true,
         "propertyName": "item",
         "options": {}
@@ -92,7 +89,7 @@
       ],
       "parameters": {
         "operation": "incr",
-        "key": "=seen:{{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }}",
+        "key": "={{ $('Config').first().json.keys.seen_prefix }}{{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }}",
         "expire": true,
         "ttl": 604800
       },
@@ -270,7 +267,7 @@
         -50
       ],
       "parameters": {
-        "content": "## Redis queue consumer (stream: oneshotllc)\n\nRPOP drains queue:oneshotllc (fed only by the sorter). Items without `stream` are rejected with an error.\n\nINCR on seen:{owner}/{repo}#{number} is the atomic first-winner claim (TTL 7d). After the spec comment is posted: label `hold` is applied (C3, .github#30) and spec:{owner}/{repo}#{n} is set (no TTL). Removing `hold` is Brian's approval; the sorter's approval path then pushes the issue to queue:build:<stream> exactly once (build:{key} INCR).\n\nPublish Spec Comment fails the execution on error (C1).",
+        "content": "## Stream Consumer\n\nMechanics only; names come from the config key. Each tick: load config, one pop per configured stream queue. Items without `stream` are rejected with an error.\n\nINCR on `<seen_prefix><owner>/<repo>#<n>` is the atomic first-winner claim. After the spec comment is posted, the hold label from config is applied and `<spec_prefix><key>` is set. Removing the hold label on the issue is the approval; the sorter's approval path then releases the item to the build queue exactly once.\n\nA failed comment post is an error execution.",
         "color": 4,
         "width": 972,
         "height": 312
@@ -317,12 +314,12 @@
       ],
       "parameters": {
         "errorType": "errorMessage",
-        "errorMessage": "=rejected: item {{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }} has no stream (bypassed the sorter?)"
+        "errorMessage": "=rejected: item {{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }} has no stream"
       }
     },
     {
       "id": "99d82ae3-3065-4399-88d6-71dca315bcac",
-      "name": "Apply hold Label",
+      "name": "Apply Hold Label",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -349,7 +346,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"labels\":[\"hold\"]}",
+        "jsonBody": "={{ JSON.stringify({ labels: [ $('Config').first().json.labels.hold ] }) }}",
         "options": {}
       },
       "credentials": {
@@ -370,7 +367,7 @@
       ],
       "parameters": {
         "operation": "set",
-        "key": "=spec:{{ $('Render Comment Body').item.json.repository_owner }}/{{ $('Render Comment Body').item.json.repository_name }}#{{ $('Render Comment Body').item.json.issue_number }}",
+        "key": "={{ $('Config').first().json.keys.spec_prefix }}{{ $('Render Comment Body').item.json.repository_owner }}/{{ $('Render Comment Body').item.json.repository_name }}#{{ $('Render Comment Body').item.json.issue_number }}",
         "value": "={{ $now.toISO() }}",
         "keyType": "string",
         "expire": false
@@ -381,20 +378,62 @@
           "name": "Redis (local triage queue)"
         }
       }
+    },
+    {
+      "id": "3b3535f0-cf83-4d77-933d-a583d81cc432",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        80,
+        112
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cfg",
+        "key": "cfg:pipeline",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "d8a67214-bf16-46aa-8b61-d593dba6dfa1",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        150,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
+      }
+    },
+    {
+      "id": "f949f905-0bb4-4821-9820-9af3ed69c756",
+      "name": "Stream Queues",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        190,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// One item per configured stream: this consumer serves every stream, one pop each per tick.\nconst cfg = $input.first().json;\nconst names = new Set([cfg.streams.default, ...((cfg.streams.rules || []).map(r => r.stream))].filter(Boolean));\nreturn [...names].map(s => ({ json: { stream: s, list: cfg.queues.stream_prefix + s } }));"
+      }
     }
   ],
   "connections": {
-    "Drain Queue Every Minute": {
-      "main": [
-        [
-          {
-            "node": "Pop Queue Item",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Pop Queue Item": {
       "main": [
         [
@@ -519,14 +558,58 @@
       "main": [
         [
           {
-            "node": "Apply hold Label",
+            "node": "Apply Hold Label",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Apply hold Label": {
+    "Drain Queue Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Stream Queues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stream Queues": {
+      "main": [
+        [
+          {
+            "node": "Pop Queue Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Hold Label": {
       "main": [
         [
           {
@@ -542,50 +625,9 @@
     "executionOrder": "v1",
     "availableInMCP": true
   },
-  "staticData": {
-    "node:Drain Queue Every Minute": {
-      "recurrenceRules": [
-        null
-      ],
-      "recurrenceRuleSignatures": [
-        null
-      ]
-    }
-  },
   "meta": {
     "aiBuilderAssisted": true,
     "builderVariant": "mcp"
   },
-  "nodeGroups": [],
-  "pinData": null,
-  "versionId": "f3512b27-8a05-4885-b1cc-8e4fab06521e",
-  "activeVersionId": "f3512b27-8a05-4885-b1cc-8e4fab06521e",
-  "versionCounter": 4,
-  "triggerCount": 1,
-  "sourceWorkflowId": null,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-09-19T05:51:20.509Z",
-      "createdAt": "2026-09-19T05:51:20.509Z",
-      "role": "workflow:owner",
-      "workflowId": "8ukVVloMcWl0jMkz",
-      "projectId": "kbxEhpIE8mw6KCCA",
-      "project": {
-        "updatedAt": "2026-09-12T22:56:00.120Z",
-        "createdAt": "2026-08-23T06:40:56.864Z",
-        "id": "kbxEhpIE8mw6KCCA",
-        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "customTelemetryTags": [],
-        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "C3: apply hold after spec, record spec: key (draft, not yet published)",
-    "description": "oneshotllc/.github#30 scenario 3: every triaged issue is labeled hold right after its spec comment, and spec:{key} is recorded so the sorter's approval path can release it later."
-  }
+  "nodeGroups": []
 }
