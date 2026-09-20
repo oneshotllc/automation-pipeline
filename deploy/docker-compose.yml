@@ -20,6 +20,8 @@ services:
     depends_on: { redis: { condition: service_healthy } }
     restart: unless-stopped
   loopback-bridge:
+    # OPERATE WITH `docker compose up -d` (whole stack), never `up -d n8n` alone: this sidecar joins n8n's
+    # network namespace, so recreating n8n without recreating the bridge leaves it attached to a dead container.
     # Shares n8n's network namespace so credentials that say 127.0.0.1 keep working unchanged:
     #   127.0.0.1:6379 -> redis service; 127.0.0.1:8790 -> Claude shim on the host.
     image: alpine/socat:latest
