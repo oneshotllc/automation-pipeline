@@ -1,11 +1,8 @@
 {
-  "updatedAt": "2026-09-19T19:32:56.860Z",
-  "createdAt": "2026-09-19T19:25:01.601Z",
   "id": "EuMYAIadQbkYh0FH",
-  "name": "Queue Sorter (intake → stream)",
-  "description": "C2 sorter (oneshotllc/.github#29): drains queue:intake, drops already-seen items, routes repo→stream via oneshotllc/.github automation/streams.json, pushes to queue:<stream> with stream in the payload.",
+  "name": "Queue Sorter",
+  "description": "Drains the intake queue: drops already-seen items, routes new items to their stream queue by config rules, and releases approved specified issues to the build queue exactly once. Config-driven; no model call.",
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "id": "096d972a-b8bd-440e-9b61-b93be114da7a",
@@ -28,41 +25,6 @@
       }
     },
     {
-      "id": "2ad4b96d-9d20-4f8d-939a-7f291c5e3b9a",
-      "name": "Load Routing Table",
-      "type": "n8n-nodes-base.github",
-      "typeVersion": 1.1,
-      "position": [
-        224,
-        0
-      ],
-      "parameters": {
-        "authentication": "githubAppApi",
-        "resource": "file",
-        "operation": "get",
-        "owner": {
-          "__rl": true,
-          "mode": "name",
-          "value": "oneshotllc"
-        },
-        "repository": {
-          "__rl": true,
-          "mode": "name",
-          "value": ".github"
-        },
-        "filePath": "automation/streams.json",
-        "asBinaryProperty": false,
-        "additionalParameters": {}
-      },
-      "credentials": {
-        "githubAppApi": {
-          "id": "ghAppOneshotPr01",
-          "name": "GitHub App - oneshot-pr-bot"
-        }
-      },
-      "webhookId": "f7bd16a5-2791-4d92-9dee-a0e0086bf273"
-    },
-    {
       "id": "e4116335-9872-486e-ab4f-c303b6632d7a",
       "name": "Pop Intake Item",
       "type": "n8n-nodes-base.redis",
@@ -73,7 +35,7 @@
       ],
       "parameters": {
         "operation": "pop",
-        "list": "queue:intake",
+        "list": "={{ $('Config').first().json.queues.intake }}",
         "tail": true,
         "propertyName": "item",
         "options": {}
@@ -147,7 +109,7 @@
       "parameters": {
         "operation": "get",
         "propertyName": "seen",
-        "key": "=seen:{{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }}",
+        "key": "={{ $('Config').first().json.keys.seen_prefix }}{{ $json.item.repository_owner }}/{{ $json.item.repository_name }}#{{ $json.item.issue_number }}",
         "keyType": "string",
         "options": {}
       },
@@ -212,7 +174,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// Sorter routing (C2, oneshotllc/.github#29). Table lookup only; never logic that needs a model.\nconst src = $('Pop Intake Item').item.json.item;\nconst raw = $('Load Routing Table').first().json.content || '';\nconst table = JSON.parse(Buffer.from(String(raw).replace(/\\n/g, ''), 'base64').toString('utf8'));\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of (table.rules || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = table.default || null;\nif (!stream) throw new Error(`sorter: no stream for ${full} and no default in streams.json`);\nconst item = Object.assign({}, src, { stream });\nreturn { json: { stream, key: `${full}#${src.issue_number}`, payload: JSON.stringify(item) } };"
+        "jsCode": "// Table lookup only. Streams and rules come from config.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of ((cfg.streams && cfg.streams.rules) || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = (cfg.streams && cfg.streams.default) || null;\nif (!stream) throw new Error(`sorter: no stream for ${full} and no default stream in config`);\nconst item = Object.assign({}, src, { stream });\nreturn { json: { stream, list: cfg.queues.stream_prefix + stream, key: `${full}#${src.issue_number}`, payload: JSON.stringify(item) } };"
       }
     },
     {
@@ -226,7 +188,7 @@
       ],
       "parameters": {
         "operation": "push",
-        "list": "=queue:{{ $json.stream }}",
+        "list": "={{ $json.list }}",
         "messageData": "={{ $json.payload }}",
         "tail": false
       },
@@ -250,7 +212,7 @@
         "color": 4,
         "width": 1700,
         "height": 300,
-        "content": "## Sorter (C2 #29, C3 #30)\n\nEvery minute: load `automation/streams.json` from oneshotllc/.github once, then loop RPOP `queue:intake` (max 500/run).\n\n**Triage path** (not yet seen): route repo → stream from the table, LPUSH to `queue:<stream>`. The consumer posts the spec, labels `hold`, sets `spec:{key}`.\n\n**Approval path** (already seen): if the item is an issue (not a PR), has no `hold` label, and `spec:{key}` exists, INCR `build:{key}`; on the first claim only, LPUSH to `queue:build:<stream>`. Removing `hold` on GitHub is therefore the one approval action; the next poller tick (≤5 min) releases the build exactly once.\n\nNo model calls here, ever. Table lookups and Redis keys only."
+        "content": "## Queue Sorter\n\nMechanics only; names come from the config key. Every run: load config, then loop-pop the intake queue (max 500 per run).\n\nTriage path (not yet seen): route repo to stream from `streams.rules` / `streams.default`, push to `<stream_prefix><stream>`.\n\nApproval path (already seen): an issue (not a PR) without the hold label whose spec marker exists is claimed once (`<build_prefix><key>` INCR) and pushed to `<build_prefix stream queue>`; the consumer of that queue builds it.\n\nNo model call. Table lookups and key checks only."
       }
     },
     {
@@ -265,7 +227,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// Approval path (C3, oneshotllc/.github#30): a seen issue with no `hold` label may proceed to the build queue.\nconst src = $('Pop Intake Item').item.json.item;\nconst labels = (src.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst isPR = /\\/pull\\/\\d+/.test(String(src.issue_url || ''));\nconst held = labels.includes('hold');\nconst key = `${src.repository_owner}/${src.repository_name}#${src.issue_number}`;\nreturn { json: { key, eligible: !held && !isPR, held, isPR } };"
+        "jsCode": "// A seen issue with no hold label may proceed to the build queue.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst labels = (src.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst isPR = /\\/pull\\/\\d+/.test(String(src.issue_url || ''));\nconst held = labels.includes(cfg.labels.hold);\nconst key = `${src.repository_owner}/${src.repository_name}#${src.issue_number}`;\nreturn { json: { key, eligible: !held && !isPR, held, isPR } };"
       }
     },
     {
@@ -310,7 +272,7 @@
       "parameters": {
         "operation": "get",
         "propertyName": "spec",
-        "key": "=spec:{{ $json.key }}",
+        "key": "={{ $('Config').first().json.keys.spec_prefix }}{{ $json.key }}",
         "keyType": "string",
         "options": {}
       },
@@ -363,7 +325,7 @@
       ],
       "parameters": {
         "operation": "incr",
-        "key": "=build:{{ $('Approval Eligibility').item.json.key }}",
+        "key": "={{ $('Config').first().json.keys.build_prefix }}{{ $('Approval Eligibility').item.json.key }}",
         "expire": false
       },
       "credentials": {
@@ -415,7 +377,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// Same table lookup as Route To Stream; the build queue is per stream too.\nconst src = $('Pop Intake Item').item.json.item;\nconst raw = $('Load Routing Table').first().json.content || '';\nconst table = JSON.parse(Buffer.from(String(raw).replace(/\\n/g, ''), 'base64').toString('utf8'));\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of (table.rules || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = table.default || null;\nif (!stream) throw new Error(`sorter: no stream for ${full}`);\nconst item = Object.assign({}, src, { stream, stage: 'build', approved_at: new Date().toISOString() });\nreturn { json: { stream, key: `${full}#${src.issue_number}`, payload: JSON.stringify(item) } };"
+        "jsCode": "const cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of ((cfg.streams && cfg.streams.rules) || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = (cfg.streams && cfg.streams.default) || null;\nif (!stream) throw new Error(`sorter: no stream for ${full}`);\nconst item = Object.assign({}, src, { stream, stage: 'build', approved_at: new Date().toISOString() });\nreturn { json: { stream, list: cfg.queues.build_prefix + stream, key: `${full}#${src.issue_number}`, payload: JSON.stringify(item) } };"
       }
     },
     {
@@ -429,7 +391,7 @@
       ],
       "parameters": {
         "operation": "push",
-        "list": "=queue:build:{{ $json.stream }}",
+        "list": "={{ $json.list }}",
         "messageData": "={{ $json.payload }}",
         "tail": false
       },
@@ -439,31 +401,47 @@
           "name": "Redis (local triage queue)"
         }
       }
+    },
+    {
+      "id": "77040d43-da41-482f-bda7-060d3dae26c5",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        200,
+        200
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cfg",
+        "key": "cfg:pipeline",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "4d1a27fe-abb7-4ff5-8ee0-2749a04afc93",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
+      }
     }
   ],
   "connections": {
-    "Every Minute": {
-      "main": [
-        [
-          {
-            "node": "Load Routing Table",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Load Routing Table": {
-      "main": [
-        [
-          {
-            "node": "Pop Intake Item",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Pop Intake Item": {
       "main": [
         [
@@ -663,6 +641,39 @@
           }
         ]
       ]
+    },
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -671,50 +682,9 @@
     "saveDataErrorExecution": "all",
     "saveDataSuccessExecution": "all"
   },
-  "staticData": {
-    "node:Every Minute": {
-      "recurrenceRules": [
-        null
-      ],
-      "recurrenceRuleSignatures": [
-        null
-      ]
-    }
-  },
   "meta": {
     "aiBuilderAssisted": true,
     "builderVariant": "mcp"
   },
-  "nodeGroups": [],
-  "pinData": null,
-  "versionId": "24f0638f-2f95-4d94-9333-772f5f5c38c3",
-  "activeVersionId": "24f0638f-2f95-4d94-9333-772f5f5c38c3",
-  "versionCounter": 3,
-  "triggerCount": 1,
-  "sourceWorkflowId": null,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-09-19T19:25:01.602Z",
-      "createdAt": "2026-09-19T19:25:01.602Z",
-      "role": "workflow:owner",
-      "workflowId": "EuMYAIadQbkYh0FH",
-      "projectId": "kbxEhpIE8mw6KCCA",
-      "project": {
-        "updatedAt": "2026-09-12T22:56:00.120Z",
-        "createdAt": "2026-08-23T06:40:56.864Z",
-        "id": "kbxEhpIE8mw6KCCA",
-        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "customTelemetryTags": [],
-        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "C3: approval path — seen + no hold + spec → build queue once (draft)",
-    "description": "oneshotllc/.github#30 scenarios 1 and 2: already-seen issues without hold and with a spec marker are pushed to queue:build:<stream> exactly once via an INCR claim on build:{key}. PRs and held issues are dropped."
-  }
+  "nodeGroups": []
 }

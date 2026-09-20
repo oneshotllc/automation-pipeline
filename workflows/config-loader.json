@@ -1,0 +1,161 @@
+{
+  "id": "7D0ysmSWfBZnKZbq",
+  "name": "Config Loader",
+  "description": "Syncs the pipeline configuration file from the org repository into the Redis config key every minute. The file location is the single bootstrap literal; every other workflow reads the key.",
+  "active": true,
+  "nodes": [
+    {
+      "id": "135d1806-0412-4da8-8b45-e07ca83bfcac",
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "61b8f64b-87ce-4205-8bb6-6f03c741c7d2",
+      "name": "Fetch Config File",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "authentication": "githubAppApi",
+        "resource": "file",
+        "operation": "get",
+        "owner": {
+          "__rl": true,
+          "mode": "name",
+          "value": "oneshotllc"
+        },
+        "repository": {
+          "__rl": true,
+          "mode": "name",
+          "value": ".github"
+        },
+        "filePath": "automation/pipeline.json",
+        "asBinaryProperty": false,
+        "additionalParameters": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      },
+      "webhookId": "a286aba3-77c9-4964-ba4e-c3246fc674dd"
+    },
+    {
+      "id": "d58c7a6a-c685-4bf5-9cfa-5edc9112352b",
+      "name": "Decode And Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const raw = $input.first().json.content || '';\nconst text = Buffer.from(String(raw).replace(/\\n/g, ''), 'base64').toString('utf8');\nconst cfg = JSON.parse(text);\nfor (const k of ['org', 'streams', 'queues', 'keys', 'labels', 'ingress', 'merge']) { if (!(k in cfg)) throw new Error('config missing key: ' + k); }\nreturn [{ json: { text: JSON.stringify(cfg) } }];"
+      }
+    },
+    {
+      "id": "4c512573-25b5-404d-88f6-c5c162590901",
+      "name": "Store Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "cfg:pipeline",
+        "value": "={{ $json.text }}",
+        "keyType": "string",
+        "expire": false
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "596d9dc3-1e61-4e61-ace0-43c5c7da8336",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 900,
+        "height": 180,
+        "content": "## Config Loader\n\nThe one place a repository path is written down: it fetches the pipeline configuration file, validates the required top-level keys, and stores the JSON in the config key every minute. Every other workflow starts by reading that key, so a config change is live within a minute and no workflow carries names, labels, policies or targets of its own."
+      }
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [
+        [
+          {
+            "node": "Fetch Config File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Config File": {
+      "main": [
+        [
+          {
+            "node": "Decode And Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decode And Validate": {
+      "main": [
+        [
+          {
+            "node": "Store Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "meta": {
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp"
+  },
+  "nodeGroups": []
+}

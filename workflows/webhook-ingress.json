@@ -1,11 +1,8 @@
 {
-  "updatedAt": "2026-09-19T20:03:00.363Z",
-  "createdAt": "2026-08-24T07:27:23.333Z",
   "id": "d59YY3F06IEMKLWh",
-  "name": "GitHub Issue TDD BDD Triage",
-  "description": "GitHub App webhook ingress (C4, .github#31): verifies X-Hub-Signature-256 against cfg:gh_webhook_secret (401 on mismatch), normalizes issues/pull_request events, admits human-actor open items, pushes the poller-shaped item to queue:intake.",
+  "name": "Webhook Ingress",
+  "description": "Signature-verified GitHub webhook ingress. Normalizes events into the intake envelope, routes approving reviews to the merger immediately and everything else to the intake queue. Config-driven.",
   "active": true,
-  "isArchived": false,
   "nodes": [
     {
       "parameters": {
@@ -36,7 +33,7 @@
         0
       ],
       "parameters": {
-        "list": "queue:intake",
+        "list": "={{ $('Config').first().json.queues.intake }}",
         "messageData": "={{ $json.payload }}",
         "operation": "push",
         "tail": false
@@ -60,7 +57,7 @@
       "parameters": {
         "operation": "get",
         "propertyName": "secret",
-        "key": "cfg:gh_webhook_secret",
+        "key": "={{ $('Config').first().json.keys.webhook_secret }}",
         "keyType": "string",
         "options": {}
       },
@@ -145,7 +142,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// The only node that knows what a GitHub payload looks like. Everything downstream reads this envelope.\nconst headers = $json.headers || {};\nconst b = $json.body || {};\nconst event = String(headers['x-github-event'] || '');\nconst item = b.issue || b.pull_request || {};\nconst repo = b.repository || {};\nconst sender = b.sender || {};\nconst owner = (repo.owner && repo.owner.login) || (repo.full_name || '').split('/')[0] || '';\nconst name = repo.name || (repo.full_name || '').split('/')[1] || '';\nconst actor = sender.login || '';\nconst actorIsBot = sender.type === 'Bot' || /\\[bot\\]$/.test(actor);\nconst labels = (item.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '').filter(Boolean);\nreturn { json: {\n  event, action: String(b.action || ''),\n  repository_owner: owner, repository_name: name, issue_number: Number(item.number || 0),\n  title: item.title == null ? '' : String(item.title), body: item.body == null ? '' : String(item.body),\n  labels, author: (item.user && item.user.login) || '', issue_url: item.html_url || '',\n  issue_state: item.state || '', actor, actor_is_bot: actorIsBot,\n  changed_label: (b.label && b.label.name) || '',\n  delivery_id: 'webhook:' + String(headers['x-github-delivery'] || '') } };"
+        "jsCode": "// The only node that knows what a GitHub payload looks like. Everything downstream reads this envelope.\nconst cfg = $('Config').first().json;\nconst headers = $json.headers || {};\nconst b = $json.body || {};\nconst event = String(headers['x-github-event'] || '');\nconst item = b.issue || b.pull_request || {};\nconst repo = b.repository || {};\nconst sender = b.sender || {};\nconst owner = (repo.owner && repo.owner.login) || (repo.full_name || '').split('/')[0] || '';\nconst name = repo.name || (repo.full_name || '').split('/')[1] || '';\nconst actor = sender.login || '';\nconst actorIsBot = sender.type === 'Bot' || /\\[bot\\]$/.test(actor) || (cfg.bots || []).includes(actor);\nconst labels = (item.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '').filter(Boolean);\nconst review = b.review || {};\nconst reviewer = (review.user && review.user.login) || '';\nreturn { json: {\n  event, action: String(b.action || ''),\n  repository_owner: owner, repository_name: name, issue_number: Number(item.number || 0),\n  title: item.title == null ? '' : String(item.title), body: item.body == null ? '' : String(item.body),\n  labels, author: (item.user && item.user.login) || '', issue_url: item.html_url || '',\n  issue_state: item.state || '', actor, actor_is_bot: actorIsBot,\n  changed_label: (b.label && b.label.name) || '',\n  review_state: String(review.state || '').toLowerCase(), reviewer,\n  reviewer_is_approver: (cfg.approvers || []).includes(reviewer),\n  admitted_event: (cfg.ingress.events || []).includes(event),\n  delivery_id: 'webhook:' + String(headers['x-github-delivery'] || '') } };"
       }
     },
     {
@@ -166,7 +163,7 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ ['issues','pull_request'].includes($json.event) }}",
+              "leftValue": "={{ $json.admitted_event }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -174,7 +171,7 @@
               }
             },
             {
-              "leftValue": "={{ ['opened','reopened','edited','labeled','unlabeled','synchronize','ready_for_review'].includes($json.action) }}",
+              "leftValue": "={{ ['opened','reopened','edited','labeled','unlabeled','synchronize','ready_for_review','submitted','created'].includes($json.action) }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -266,22 +263,118 @@
         "color": 4,
         "width": 1900,
         "height": 280,
-        "content": "## GitHub App webhook ingress (C4, oneshotllc/.github#31)\n\nApp hook -> Funnel :10000 -> Caddy :8460 (/webhook/* only) -> here. Get Webhook Secret reads cfg:gh_webhook_secret from loopback Redis (rotated with PATCH /app/hook/config; never stored in this workflow or its export). Verify Signature HMACs the raw body and answers 401 on mismatch, fail-closed if the secret is unset.\n\nAdmit: issues/pull_request events, open items, actions opened/reopened/edited/labeled/unlabeled/synchronize/ready_for_review. Bot actors are admitted only for opened/reopened (tickets are created by the bot from chat); bot label edits are dropped so Apply hold Label cannot re-trigger itself. Brian removing hold (unlabeled, human actor) is the fast path to the sorter's approval check.\n\nOutput is the poller's item shape, pushed to queue:intake. The 5-minute poller remains the backstop for missed deliveries; the sorter dedupes both."
+        "content": "## Webhook Ingress\n\nMechanics only; names come from the config key. The webhook secret is read from the configured Redis key at request time and is never stored in this workflow.\n\nVerify the HMAC signature of the raw body (401 on mismatch, fail-closed when the secret is unset). Normalize the GitHub payload into the intake envelope. Admit only configured events on open items; bot actors are admitted for opened/reopened only so the pipeline's own label edits cannot loop. An approving review by a configured approver calls the merger immediately; everything else admitted is pushed to the intake queue in the poller's item shape, so the sorter and consumer cannot tell the two ingress paths apart."
+      }
+    },
+    {
+      "id": "f37e773b-a019-4064-9d0a-79b5c13548a1",
+      "name": "Is Approval",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        -160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.event === 'pull_request_review' && $json.review_state === 'approved' && $json.reviewer_is_approver }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "71a37155-a4c8-4378-a94f-8ac30f988d09",
+      "name": "Merge Approved PR",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1650,
+        -260
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "approvedPrMerger01"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "workflowInputs": {
+          "mappingMode": "passThrough"
+        }
+      }
+    },
+    {
+      "id": "a5e907fa-2b13-478f-a058-d7334a11514d",
+      "name": "Merge Coordinates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1430,
+        -260
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Shape the merger's sub-workflow input exactly like its own 'Derive Coordinates' output.\nreturn { json: { owner: $json.repository_owner, repo: $json.repository_name, number: $json.issue_number, title: $json.title, html_url: $json.issue_url, via: 'webhook:' + $json.reviewer } };"
+      }
+    },
+    {
+      "id": "787a4984-aa24-4080-816b-683082ae45d8",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        110,
+        112
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "cfg",
+        "key": "cfg:pipeline",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "f3791773-a8c4-4048-98ac-a9d8eb0192f7",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        165,
+        112
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
       }
     }
   ],
   "connections": {
-    "Triage Intake": {
-      "main": [
-        [
-          {
-            "node": "Get Webhook Secret",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Get Webhook Secret": {
       "main": [
         [
@@ -337,7 +430,7 @@
       "main": [
         [
           {
-            "node": "Build Intake Item",
+            "node": "Is Approval",
             "type": "main",
             "index": 0
           }
@@ -383,6 +476,79 @@
           }
         ]
       ]
+    },
+    "Is Approval": {
+      "main": [
+        [
+          {
+            "node": "Merge Coordinates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Coordinates": {
+      "main": [
+        [
+          {
+            "node": "Merge Approved PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Approved PR": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage Intake": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Webhook Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -390,41 +556,9 @@
     "availableInMCP": true,
     "binaryMode": "separate"
   },
-  "staticData": null,
   "meta": {
     "aiBuilderAssisted": true,
     "builderVariant": "mcp"
   },
-  "nodeGroups": [],
-  "pinData": {},
-  "versionId": "7a9cbb15-8113-4078-8ea8-a67cccf8e3b4",
-  "activeVersionId": "7a9cbb15-8113-4078-8ea8-a67cccf8e3b4",
-  "versionCounter": 12,
-  "triggerCount": 1,
-  "sourceWorkflowId": null,
-  "tags": [],
-  "shared": [
-    {
-      "updatedAt": "2026-08-24T07:27:23.334Z",
-      "createdAt": "2026-08-24T07:27:23.334Z",
-      "role": "workflow:owner",
-      "workflowId": "d59YY3F06IEMKLWh",
-      "projectId": "kbxEhpIE8mw6KCCA",
-      "project": {
-        "updatedAt": "2026-09-12T22:56:00.120Z",
-        "createdAt": "2026-08-23T06:40:56.864Z",
-        "id": "kbxEhpIE8mw6KCCA",
-        "name": "Brian OneShot <brianoneshotstudios@gmail.com>",
-        "type": "personal",
-        "icon": null,
-        "description": null,
-        "customTelemetryTags": [],
-        "creatorId": "afec8277-c846-4a78-ad09-de32230bae42"
-      }
-    }
-  ],
-  "versionMetadata": {
-    "name": "C4: admit bot-created issues on opened/reopened; ingress notes",
-    "description": "Added nodes: Ingress Notes\nUpdated nodes: Admit"
-  }
+  "nodeGroups": []
 }
