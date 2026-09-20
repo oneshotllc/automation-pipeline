@@ -1,0 +1,39 @@
+# NodeMation runtime (oneshotllc/.github#27). Portable: the same file runs under colima on the Mac Studio
+# today and on any Docker host later. Pipeline logic lives in n8n workflows + Redis keys only.
+# The GitHub runner (compute) stays on the host on purpose; it moves when the compute moves.
+name: nodemation
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports: ["127.0.0.1:6379:6379"]          # loopback only: checks and oneshot-pr tooling use redis-cli
+    volumes: ["redis-data:/data"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 3s, retries: 5 }
+    restart: unless-stopped
+  n8n:
+    image: n8nio/n8n:2.35.7
+    env_file: [n8n.env]                     # copied from ~/n8n-app/.env at cutover; never committed
+    ports: ["127.0.0.1:5678:5678"]          # host Caddy :8444 and the webhook gate proxy here
+    volumes:
+      - n8n-data:/home/node/.n8n
+    extra_hosts: ["host.docker.internal:host-gateway"]   # Claude shim + Hermes services on the host
+    depends_on: { redis: { condition: service_healthy } }
+    restart: unless-stopped
+  loopback-bridge:
+    # Shares n8n's network namespace so credentials that say 127.0.0.1 keep working unchanged:
+    #   127.0.0.1:6379 -> redis service; 127.0.0.1:8790 -> Claude shim on the host.
+    image: alpine/socat:latest
+    network_mode: "service:n8n"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["socat TCP-LISTEN:6379,bind=127.0.0.1,fork,reuseaddr TCP:redis:6379 & exec socat TCP-LISTEN:8790,bind=127.0.0.1,fork,reuseaddr TCP:host.docker.internal:8790"]
+    depends_on: [n8n]
+    restart: unless-stopped
+  webhook-gate:
+    image: caddy:2-alpine
+    ports: ["127.0.0.1:8460:8460"]          # the Tailscale Funnel on :10000 targets this
+    volumes: ["./caddy/Caddyfile:/etc/caddy/Caddyfile:ro"]
+    depends_on: [n8n]
+    restart: unless-stopped
+volumes:
+  redis-data: {}
+  n8n-data: {}

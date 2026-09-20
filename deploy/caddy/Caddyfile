@@ -1,0 +1,14 @@
+# Public webhook gate (C1 scenario 2). Only /webhook/* reaches n8n; everything else is 404.
+{
+	admin off
+	auto_https off
+}
+:8460 {
+	@webhook path /webhook/*
+	handle @webhook {
+		reverse_proxy n8n:5678
+	}
+	handle {
+		respond 404
+	}
+}
