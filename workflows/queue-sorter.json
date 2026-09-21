@@ -1500,6 +1500,65 @@
         "language": "javaScript",
         "jsCode": "const cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of ((cfg.streams && cfg.streams.rules) || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = (cfg.streams && cfg.streams.default) || null;\nif (!stream) throw new Error(`sorter: no stream for ${full}`);\nconst item = Object.assign({}, src, { stream });\nreturn { json: { stream, list: cfg.queues.build_prefix + stream, payload: JSON.stringify(item) } };"
       }
+    },
+    {
+      "id": "f172be17-390c-4d25-9ab2-6371a6820dfa",
+      "name": "Explain Re-triage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        20
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: 'Approval seen, but this ticket has no specification yet, so nothing can be built from it. Triage runs now and posts the specification; the `' + $('Config').first().json.labels.hold + '` label comes back with it. Remove the label again to build.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "e94443d1-0c32-47b5-9d60-236029f05570",
+      "name": "Forget Seen",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        20
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Config').first().json.keys.seen_prefix }}{{ $('Approval Eligibility').item.json.key }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
     }
   ],
   "connections": {
@@ -1645,7 +1704,7 @@
         ],
         [
           {
-            "node": "Drop Duplicate",
+            "node": "Explain Re-triage",
             "type": "main",
             "index": 0
           }
@@ -2246,6 +2305,28 @@
         [
           {
             "node": "Push Feedback To Build Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explain Re-triage": {
+      "main": [
+        [
+          {
+            "node": "Forget Seen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Forget Seen": {
+      "main": [
+        [
+          {
+            "node": "Route To Stream",
             "type": "main",
             "index": 0
           }
