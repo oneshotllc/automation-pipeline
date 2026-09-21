@@ -154,7 +154,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "const cfg = $('Config').first().json;\nconst it = $json.item;\nconst repo = `${it.repository_owner}/${it.repository_name}`;\nconst branch = cfg.build.branch_prefix + it.issue_number;\nconst mode = it.stage === 'feedback' ? 'feedback' : (it.stage === 'repair' ? 'repair' : 'build');\nconst b = cfg.build || {};\nreturn { json: { repo, owner: it.repository_owner, name: it.repository_name, issue: it.issue_number, branch, mode,\n  dispatch_repo: b.dispatch_repo, workflow_file: b.workflow_file, ref: b.ref,\n  inputs: { repo, issue: String(it.issue_number), branch, hold_label: cfg.labels.hold, pr_open_label: cfg.labels.pr_open, reviewers: (cfg.approvers || []).join(','), runner_label: b.runner_label, spec_sentinel: cfg.spec.sentinel, agent: b.agent, mode,\n    max_turns: String(b.max_turns || 60), timeout_minutes: String(b.timeout_minutes || 60), claim_minutes: String(b.claim_minutes || 90), max_attempts: String(b.max_attempts || 1) } } };"
+        "jsCode": "const cfg = $('Config').first().json;\nconst it = $json.item;\nconst b = cfg.build || {}; const pr = cfg.pipeline_repair || {};\nconst stage = String(it.stage || 'build');\nconst mode = stage === 'feedback' ? 'feedback' : (stage === 'repair' ? 'repair' : (stage === 'pipeline-repair' ? 'pipeline-repair' : 'build'));\nconst isPipeline = mode === 'pipeline-repair';\nconst repo = isPipeline ? String(b.dispatch_repo) : `${it.repository_owner}/${it.repository_name}`;\nconst [owner, name] = repo.split('/');\nconst issue = isPipeline ? Number(it.target_issue || 0) : it.issue_number;\nconst branch = isPipeline ? String(pr.branch_prefix || 'pipeline-repair-') + String(it.run_id) : b.branch_prefix + it.issue_number;\nconst inputs = { repo, issue: String(issue), branch, hold_label: cfg.labels.hold, pr_open_label: cfg.labels.pr_open, reviewers: (cfg.approvers || []).join(','), runner_label: b.runner_label, spec_sentinel: cfg.spec.sentinel, agent: b.agent, mode,\n  max_turns: String(isPipeline ? (pr.max_turns || b.max_turns || 60) : (b.max_turns || 60)), timeout_minutes: String(b.timeout_minutes || 60), claim_minutes: String(b.claim_minutes || 90), max_attempts: String(b.max_attempts || 1) };\nif (isPipeline) Object.assign(inputs, { run_id: String(it.run_id), repair_label: String(pr.label || 'pipeline-repair'), operator_repo: String(pr.operator_repo || ''), auto_merge: String(pr.auto_merge === true) });\nreturn { json: { repo, owner, name, issue, branch, mode, run_id: it.run_id || '', dispatch_repo: b.dispatch_repo, workflow_file: b.workflow_file, ref: b.ref, inputs } };"
       }
     },
     {
@@ -280,7 +280,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "=https://api.github.com/repos/{{ $('Dispatch Inputs').item.json.repo }}/issues/{{ $('Dispatch Inputs').item.json.issue }}/comments",
+        "url": "=https://api.github.com/repos/{{ $('Dispatch Inputs').item.json.mode === 'pipeline-repair' ? ($('Dispatch Inputs').item.json.repo) : $('Dispatch Inputs').item.json.repo }}/issues/{{ $('Dispatch Inputs').item.json.issue }}/comments",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "githubAppApi",
         "sendHeaders": true,
@@ -298,7 +298,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ body: ({ feedback: 'Feedback build dispatched on branch `', repair: 'Repair build dispatched on branch `', build: 'Build dispatched on branch `' })[$('Dispatch Inputs').item.json.mode] + $('Dispatch Inputs').item.json.branch + '`. Runs: https://github.com/' + $('Dispatch Inputs').item.json.dispatch_repo + '/actions/workflows/' + $('Dispatch Inputs').item.json.workflow_file + ' (the run adds its own link here when it starts).' }) }}",
+        "jsonBody": "={{ JSON.stringify({ body: ({ feedback: 'Feedback build dispatched on branch `', repair: 'Repair build dispatched on branch `', build: 'Build dispatched on branch `', 'pipeline-repair': 'Pipeline repair dispatched for failed run ' + $('Dispatch Inputs').item.json.run_id + ' on branch `' })[$('Dispatch Inputs').item.json.mode] + $('Dispatch Inputs').item.json.branch + '`. Runs: https://github.com/' + $('Dispatch Inputs').item.json.dispatch_repo + '/actions/workflows/' + $('Dispatch Inputs').item.json.workflow_file + ' (the run adds its own link here when it starts).' }) }}",
         "options": {}
       },
       "credentials": {
@@ -306,7 +306,8 @@
           "id": "ghAppOneshotPr01",
           "name": "GitHub App - oneshot-pr-bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "680003d6-a1ab-412f-94c9-12c6aeac6483",

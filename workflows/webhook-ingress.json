@@ -187,12 +187,12 @@
               }
             },
             {
-              "leftValue": "={{ $json.issue_number }}",
+              "leftValue": "={{ $json.issue_number > 0 || $json.pipeline_run === true }}",
               "operator": {
-                "type": "number",
-                "operation": "gt"
-              },
-              "rightValue": 0
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
           "combinator": "and"
@@ -523,6 +523,66 @@
         "language": "javaScript",
         "jsCode": "// A repair item targets the ISSUE the PR was built for; dedupe key is head SHA + check name.\nconst e = $json;\nconst item = { delivery_id: e.delivery_id, repository_owner: e.repository_owner, repository_name: e.repository_name, issue_number: e.linked_issue, pr_number: e.issue_number, stage: 'repair', feedback_id: e.head_sha + ':' + e.check_name, check_name: e.check_name, run_url: e.run_url, head_sha: e.head_sha, title: e.check_name, body: '', labels: [], author: '', issue_url: e.issue_url };\nreturn { json: { item, payload: JSON.stringify(item) } };"
       }
+    },
+    {
+      "id": "43019500-e5a5-41bb-9b08-9ea8f74ed996",
+      "name": "Pipeline Run Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// A run of the configured build workflow in the dispatch repository gets its run fields and its target parsed from the run name (`<mode> <repo>#<issue>`); everything else passes through untouched.\nconst cfg = $('Config').first().json; const b = $('Triage Intake').item.json.body || {}; const e = $json;\nconst wr = b.workflow_run; const repoFull = `${e.repository_owner}/${e.repository_name}`; const bd = cfg.build || {}; const pr = cfg.pipeline_repair || {};\nconst isPipelineRun = !!wr && e.event === 'workflow_run' && repoFull === bd.dispatch_repo && String(wr.path || '').endsWith('/' + bd.workflow_file);\nif (!isPipelineRun) return { json: e };\nconst title = String(wr.display_title || wr.name || '');\nconst m = title.match(/^(\\S+)\\s+([^\\s#]+)#(\\d+)/);\nconst failed = wr.status === 'completed' && wr.conclusion === 'failure';\nreturn { json: Object.assign({}, e, { pipeline_run: true, pipeline_run_failed: failed && pr.enabled !== false, run_id: String(wr.id), run_url: String(wr.html_url || ''), run_title: title, target_mode: m ? m[1] : '', target_repo: m ? m[2] : '', target_issue: m ? Number(m[3]) : 0, issue_number: m ? Number(m[3]) : 0, head_sha: String(wr.head_sha || '') }) };"
+      }
+    },
+    {
+      "id": "6ac2767e-3eec-4c67-8938-89568c5625cd",
+      "name": "Is Failed Pipeline Run",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        60
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.pipeline_run_failed === true && $json.target_mode !== 'pipeline-repair' }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "bf4f98ce-90ef-4968-bca2-09609f13c1b3",
+      "name": "Build Pipeline Repair Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -60
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// A pipeline-repair item targets the dispatch repository; the ticket the failed run was building rides along for the note and the agent's context.\nconst e = $json;\nconst item = { delivery_id: e.delivery_id, repository_owner: e.repository_owner, repository_name: e.repository_name, issue_number: e.target_issue || 0, stage: 'pipeline-repair', run_id: e.run_id, run_url: e.run_url, run_title: e.run_title, target_repo: e.target_repo, target_issue: e.target_issue || 0, target_mode: e.target_mode, head_sha: e.head_sha, title: e.run_title, body: '', labels: [], author: '', issue_url: e.run_url };\nreturn { json: { item, payload: JSON.stringify(item) } };"
+      }
     }
   ],
   "connections": {
@@ -566,22 +626,11 @@
         ]
       ]
     },
-    "Normalize GitHub Event": {
-      "main": [
-        [
-          {
-            "node": "Admit",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Admit": {
       "main": [
         [
           {
-            "node": "Is Failed Check",
+            "node": "Is Failed Pipeline Run",
             "type": "main",
             "index": 0
           }
@@ -778,6 +827,57 @@
       ]
     },
     "Build Repair Item": {
+      "main": [
+        [
+          {
+            "node": "Enqueue To Redis Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize GitHub Event": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Run Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline Run Fields": {
+      "main": [
+        [
+          {
+            "node": "Admit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Failed Pipeline Run": {
+      "main": [
+        [
+          {
+            "node": "Build Pipeline Repair Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Failed Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Pipeline Repair Item": {
       "main": [
         [
           {
