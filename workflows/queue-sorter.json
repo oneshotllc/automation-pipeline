@@ -227,7 +227,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// A seen issue with no hold label may proceed to the build queue, unless its repository is one the runner never builds.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst labels = (src.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst isPR = /\\/pull\\/\\d+/.test(String(src.issue_url || ''));\nconst held = labels.includes(cfg.labels.hold);\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst skipped = ((cfg.build && cfg.build.skip_repos) || []).includes(full);\nconst key = `${full}#${src.issue_number}`;\nreturn { json: { key, eligible: !held && !isPR && !skipped, held, isPR, skipped } };"
+        "jsCode": "// A seen issue with no hold label may proceed to the build queue; if its repository is one the runner never builds, it is claimed once and the ticket is told the operator builds it.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst labels = (src.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst isPR = /\\/pull\\/\\d+/.test(String(src.issue_url || ''));\nconst held = labels.includes(cfg.labels.hold);\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst skipped = ((cfg.build && cfg.build.skip_repos) || []).includes(full);\nconst key = `${full}#${src.issue_number}`;\nreturn { json: { key, eligible: !held && !isPR, held, isPR, skipped } };"
       }
     },
     {
@@ -1291,6 +1291,75 @@
           "name": "Redis (local triage queue)"
         }
       }
+    },
+    {
+      "id": "2a024109-01b1-475c-b3f1-059bf5f95f93",
+      "name": "Operator Builds This Repo",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2530,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Approval Eligibility').item.json.skipped === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "d7748e78-4e39-4862-a88d-f2fa9f75d471",
+      "name": "Tell Operator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2750,
+        -160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: 'Approval seen. This repository is on the pipeline\\'s operator-built list, so no build run is dispatched for it: the operator picks it up from the board\\'s Ready column and opens the pull request by hand.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
     }
   ],
   "connections": {
@@ -1458,7 +1527,7 @@
       "main": [
         [
           {
-            "node": "Count Build Attempt",
+            "node": "Operator Builds This Repo",
             "type": "main",
             "index": 0
           }
@@ -1928,6 +1997,35 @@
       ]
     },
     "Reset Build Attempts": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operator Builds This Repo": {
+      "main": [
+        [
+          {
+            "node": "Tell Operator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Count Build Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tell Operator": {
       "main": [
         [
           {
