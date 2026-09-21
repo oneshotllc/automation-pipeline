@@ -214,6 +214,85 @@
         "language": "javaScript",
         "jsCode": "return [{ json: JSON.parse($input.first().json.cfg) }];"
       }
+    },
+    {
+      "id": "99d963e8-dad7-48cc-9819-47dc4d4611bf",
+      "name": "List Failed Build Runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        420
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.build.dispatch_repo }}/actions/workflows/{{ $json.build.workflow_file }}/runs?status=failure&per_page=30&created=>%3D{{ new Date(Date.now() - Number(($json.pipeline_repair || {}).window_minutes || 180) * 60000).toISOString().slice(0,19) }}Z",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "31588b76-105f-4428-91f4-71f3245ffd76",
+      "name": "Failed Runs To Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// One pipeline-repair item per failed build run in the window; a run that was itself a repair is skipped (no recursion). The sorter's claim per run id dedupes against the webhook path.\nconst cfg = $('Config').first().json; const pr = cfg.pipeline_repair || {}; const bd = cfg.build || {};\nif (pr.enabled === false) return [];\nconst [owner, name] = String(bd.dispatch_repo || '/').split('/');\nconst out = [];\nfor (const it of $input.all()) {\n  for (const wr of ((it.json && it.json.workflow_runs) || [])) {\n    if (wr.conclusion !== 'failure') continue;\n    const title = String(wr.display_title || wr.name || '');\n    if (title.startsWith('pipeline-repair')) continue;\n    const m = title.match(/^(\\S+)\\s+([^\\s#]+)#(\\d+)/);\n    const item = { delivery_id: 'sweep:run:' + wr.id, repository_owner: owner, repository_name: name, issue_number: m ? Number(m[3]) : 0, stage: 'pipeline-repair', run_id: String(wr.id), run_url: String(wr.html_url || ''), run_title: title, target_repo: m ? m[2] : '', target_issue: m ? Number(m[3]) : 0, target_mode: m ? m[1] : '', head_sha: String(wr.head_sha || ''), title, body: '', labels: [], author: '', issue_url: String(wr.html_url || '') };\n    out.push({ json: { list: cfg.queues.intake, payload: JSON.stringify(item) } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "aed7819e-fb67-47d0-83c9-7116473ca8bc",
+      "name": "Enqueue Pipeline Repair",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        420
+      ],
+      "parameters": {
+        "operation": "push",
+        "list": "={{ $json.list }}",
+        "messageData": "={{ $json.payload }}",
+        "tail": false
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
     }
   ],
   "connections": {
@@ -304,6 +383,33 @@
         [
           {
             "node": "List Org Repositories",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "List Failed Build Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Failed Build Runs": {
+      "main": [
+        [
+          {
+            "node": "Failed Runs To Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failed Runs To Items": {
+      "main": [
+        [
+          {
+            "node": "Enqueue Pipeline Repair",
             "type": "main",
             "index": 0
           }

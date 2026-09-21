@@ -647,7 +647,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// Feedback and repair items skip triage and go straight to the build queue; pull requests authored by a configured bot are never triaged; issues that already carry the configured spec label are marked specified and skip triage.\nconst cfg = $('Config').first().json;\nconst it = $json.item || {};\nconst isFeedback = it.stage === 'feedback' || it.stage === 'repair';\nconst isRepair = it.stage === 'repair';\nconst isPR = /\\/pull\\/\\d+/.test(String(it.issue_url || ''));\nconst labels = (it.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst botPR = isPR && (cfg.bots || []).includes(String(it.author || ''));\nconst specPresent = !isPR && !!cfg.labels.spec_present && labels.includes(cfg.labels.spec_present);\nconst key = `${it.repository_owner}/${it.repository_name}#${it.issue_number}`;\nconst prKey = `${it.repository_owner}/${it.repository_name}#${it.pr_number || ''}`;\nconst claimPrefix = isRepair ? cfg.repair.claim_prefix : cfg.feedback.claim_prefix;\nreturn { json: { item: it, key, isFeedback, isRepair, drop: botPR && !isFeedback, specPresent, seen_key: cfg.keys.seen_prefix + key, spec_key: cfg.keys.spec_prefix + key, feedback_claim: isFeedback ? `${claimPrefix}${key}@${it.feedback_id || ''}` : '', attempts_key: isRepair ? `${cfg.repair.attempts_prefix}${prKey}` : '', max_attempts: Number((cfg.repair && cfg.repair.max_attempts) || 3) } };"
+        "jsCode": "// Feedback and repair items skip triage and go straight to the build queue; pipeline-repair items (a failed run of the build workflow) are claimed per run and capped per day; pull requests authored by a configured bot are never triaged; issues that already carry the configured spec label are marked specified and skip triage.\nconst cfg = $('Config').first().json;\nconst it = $json.item || {};\nconst isFeedback = it.stage === 'feedback' || it.stage === 'repair';\nconst isRepair = it.stage === 'repair';\nconst isPipelineRepair = it.stage === 'pipeline-repair';\nconst prc = cfg.pipeline_repair || {};\nconst isPR = /\\/pull\\/\\d+/.test(String(it.issue_url || ''));\nconst labels = (it.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst botPR = isPR && (cfg.bots || []).includes(String(it.author || ''));\nconst specPresent = !isPR && !isPipelineRepair && !!cfg.labels.spec_present && labels.includes(cfg.labels.spec_present);\nconst key = `${it.repository_owner}/${it.repository_name}#${it.issue_number}`;\nconst prKey = `${it.repository_owner}/${it.repository_name}#${it.pr_number || ''}`;\nconst claimPrefix = isRepair ? cfg.repair.claim_prefix : cfg.feedback.claim_prefix;\nreturn { json: { item: it, key, isFeedback, isRepair, isPipelineRepair, drop: botPR && !isFeedback, specPresent, seen_key: cfg.keys.seen_prefix + key, spec_key: cfg.keys.spec_prefix + key, feedback_claim: isFeedback ? `${claimPrefix}${key}@${it.feedback_id || ''}` : '', attempts_key: isRepair ? `${cfg.repair.attempts_prefix}${prKey}` : '', max_attempts: Number((cfg.repair && cfg.repair.max_attempts) || 3),\n  pipeline_claim: isPipelineRepair ? String(prc.claim_prefix || 'pipeline-repair:') + String(it.run_id || '') : '', pipeline_day_key: isPipelineRepair ? String(prc.daily_prefix || 'pipeline-repair-day:') + new Date().toISOString().slice(0, 10) : '', pipeline_max: Number(prc.max_per_day || 5), pipeline_blocked: prc.enabled === false || String(it.target_mode || '') === 'pipeline-repair' || !it.run_id } };"
       }
     },
     {
@@ -715,6 +715,27 @@
                 "conditions": [
                   {
                     "leftValue": "={{ $json.specPresent && !$json.isFeedback }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "pipeline",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.isPipelineRepair === true }}",
                     "operator": {
                       "type": "boolean",
                       "operation": "true",
@@ -1360,6 +1381,125 @@
           "name": "GitHub App - oneshot-pr-bot"
         }
       }
+    },
+    {
+      "id": "4adb1b5e-86ae-4e89-a31d-54b5402292c0",
+      "name": "Claim Pipeline Repair",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -700
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ $json.pipeline_claim }}",
+        "expire": true,
+        "ttl": 2592000
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "f8b213c6-c622-4d2c-8318-d95fb0daa1e0",
+      "name": "First Pipeline Claim",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        -700
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number(Object.values($json)[0]) === 1 && $('Classify Item').item.json.pipeline_blocked !== true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "db3e893e-5521-459b-a97a-bf615d1358df",
+      "name": "Count Repairs Today",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        -700
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ $('Classify Item').item.json.pipeline_day_key }}",
+        "expire": true,
+        "ttl": 172800
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "10118ef9-7600-4e04-8bce-d3bcad956d0e",
+      "name": "Under Daily Cap",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        -700
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number(Object.values($json)[0]) <= $('Classify Item').item.json.pipeline_max }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "0f2aa581-6069-48cb-b61c-01d794a8803e",
+      "name": "Pipeline Repair Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        -700
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of ((cfg.streams && cfg.streams.rules) || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = (cfg.streams && cfg.streams.default) || null;\nif (!stream) throw new Error(`sorter: no stream for ${full}`);\nconst item = Object.assign({}, src, { stream });\nreturn { json: { stream, list: cfg.queues.build_prefix + stream, payload: JSON.stringify(item) } };"
+      }
     }
   ],
   "connections": {
@@ -1734,6 +1874,13 @@
         ],
         [
           {
+            "node": "Claim Pipeline Repair",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Check Seen",
             "type": "main",
             "index": 0
@@ -2030,6 +2177,75 @@
         [
           {
             "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Pipeline Repair": {
+      "main": [
+        [
+          {
+            "node": "First Pipeline Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Pipeline Claim": {
+      "main": [
+        [
+          {
+            "node": "Count Repairs Today",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drop Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Repairs Today": {
+      "main": [
+        [
+          {
+            "node": "Under Daily Cap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under Daily Cap": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Repair Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drop Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline Repair Payload": {
+      "main": [
+        [
+          {
+            "node": "Push Feedback To Build Queue",
             "type": "main",
             "index": 0
           }
