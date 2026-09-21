@@ -212,7 +212,7 @@
         "color": 4,
         "width": 1700,
         "height": 300,
-        "content": "## Queue Sorter\n\nMechanics only; names come from the config key. Every run: load config, then loop-pop the intake queue (max 500 per run).\n\nTriage path (not yet seen): issues carrying the configured spec label are marked seen and specified without a model call; everything else is routed repo to stream from `streams.rules` / `streams.default` and pushed to `<stream_prefix><stream>`. Bot-authored pull requests are never triaged.\n\nFeedback and repair items (stage feedback / repair) bypass triage: claimed once per review id or per head SHA + check, repair attempts counted per PR against `repair.max_attempts` (at the cap: a comment on the PR, the needs-triage label on the issue, nothing more), then pushed to the stream's build queue.\n\nApproval path (already seen): an issue (not a PR) without the hold label whose spec marker exists is checked for open blockers (GitHub issue dependencies, body-line fallback); only the head of its chain is claimed once and pushed to the build queue.\n\nNo model call. Table lookups, key checks and dependency reads only."
+        "content": "## Queue Sorter\n\nMechanics only; names come from the config key. Every run: load config, then loop-pop the intake queue (max 500 per run).\n\nTriage path (not yet seen): issues carrying the configured spec label are marked seen and specified without a model call; everything else is routed repo to stream from `streams.rules` / `streams.default` and pushed to `<stream_prefix><stream>`. Bot-authored pull requests are never triaged.\n\nApproval path (seen, specified, no hold label, head of its chain): the build claim `<build_prefix><key>` is an INCR; the first claim wins. Each win counts one attempt in `<build_attempts_prefix><key>` against `build.max_attempts`, then the claim is given `build.claim_minutes` to live and the item goes to the build queue. When the claim expires with the issue still approved and no pull request open, the next pass releases it again (a failed build retries by itself). At the cap: a comment on the issue, the hold label back, both keys deleted, so removing the hold starts fresh.\n\nFeedback and repair items (stage feedback / repair) bypass triage: claimed once per review id or per head SHA + check, repair attempts counted per PR against `repair.max_attempts` (at the cap: a comment on the PR, the needs-triage label on the issue, nothing more), then pushed to the build queue."
       }
     },
     {
@@ -227,7 +227,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// A seen issue with no hold label may proceed to the build queue.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst labels = (src.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst isPR = /\\/pull\\/\\d+/.test(String(src.issue_url || ''));\nconst held = labels.includes(cfg.labels.hold);\nconst key = `${src.repository_owner}/${src.repository_name}#${src.issue_number}`;\nreturn { json: { key, eligible: !held && !isPR, held, isPR } };"
+        "jsCode": "// A seen issue with no hold label may proceed to the build queue, unless its repository is one the runner never builds.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nconst labels = (src.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst isPR = /\\/pull\\/\\d+/.test(String(src.issue_url || ''));\nconst held = labels.includes(cfg.labels.hold);\nconst full = `${src.repository_owner}/${src.repository_name}`;\nconst skipped = ((cfg.build && cfg.build.skip_repos) || []).includes(full);\nconst key = `${full}#${src.issue_number}`;\nreturn { json: { key, eligible: !held && !isPR && !skipped, held, isPR, skipped } };"
       }
     },
     {
@@ -1097,6 +1097,200 @@
           "name": "GitHub App - oneshot-pr-bot"
         }
       }
+    },
+    {
+      "id": "aa13ac59-a665-4b36-af87-ed74253c023c",
+      "name": "Count Build Attempt",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        -300
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ $('Config').first().json.keys.build_attempts_prefix }}{{ $('Approval Eligibility').item.json.key }}",
+        "expire": true,
+        "ttl": 2592000
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "b1ad829a-a689-489c-81b6-39f2dfbaccf9",
+      "name": "Under Build Cap",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number(Object.values($json)[0]) <= Number(($('Config').first().json.build || {}).max_attempts || 1) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "5c76732f-596e-404c-8402-441165a9727b",
+      "name": "Claim Window",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3080,
+        -300
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "={{ $('Config').first().json.keys.build_prefix }}{{ $('Approval Eligibility').item.json.key }}",
+        "value": "1",
+        "keyType": "string",
+        "expire": true,
+        "ttl": "={{ Number(($('Config').first().json.build || {}).claim_minutes || 90) * 60 }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "ace7b1d8-9df6-46b6-a58a-49b5b02e839e",
+      "name": "Build Cap Reached: Comment On Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        -460
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: 'Automatic builds for this issue reached the configured cap (' + (($('Config').first().json.build || {}).max_attempts || 1) + ') without a pull request. The `' + $('Config').first().json.labels.hold + '` label is back. Read the build run links in the comments above, fix the cause (often a ticket too large for one run: split it), then remove the label to start again.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "734346e5-ce17-48a5-9712-abba1355cf30",
+      "name": "Build Cap Reached: Re-hold Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        -460
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: [ $('Config').first().json.labels.hold ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "7bf9a430-3792-4bf7-8a5a-50fb47ef64da",
+      "name": "Reset Build Claim",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        -460
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Config').first().json.keys.build_prefix }}{{ $('Approval Eligibility').item.json.key }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "53c796f8-1de7-4458-b6d1-83062bd43c54",
+      "name": "Reset Build Attempts",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3740,
+        -460
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Config').first().json.keys.build_attempts_prefix }}{{ $('Approval Eligibility').item.json.key }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
     }
   ],
   "connections": {
@@ -1264,7 +1458,7 @@
       "main": [
         [
           {
-            "node": "Build Payload",
+            "node": "Count Build Attempt",
             "type": "main",
             "index": 0
           }
@@ -1650,6 +1844,90 @@
       ]
     },
     "Cap Reached: Label Issue": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Build Attempt": {
+      "main": [
+        [
+          {
+            "node": "Under Build Cap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under Build Cap": {
+      "main": [
+        [
+          {
+            "node": "Claim Window",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Cap Reached: Comment On Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Window": {
+      "main": [
+        [
+          {
+            "node": "Build Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Cap Reached: Comment On Issue": {
+      "main": [
+        [
+          {
+            "node": "Build Cap Reached: Re-hold Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Cap Reached: Re-hold Issue": {
+      "main": [
+        [
+          {
+            "node": "Reset Build Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reset Build Claim": {
+      "main": [
+        [
+          {
+            "node": "Reset Build Attempts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reset Build Attempts": {
       "main": [
         [
           {
