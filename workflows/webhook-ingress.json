@@ -667,6 +667,91 @@
           "mappingMode": "passThrough"
         }
       }
+    },
+    {
+      "id": "64b3a9ba-a939-483b-837f-17c6dd912b6d",
+      "name": "Is Hold Removal",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2860,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.action === 'unlabeled' && $json.changed_label === $('Config').first().json.labels.hold }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c2e70558-4143-4b26-84fa-cb3402999ce3",
+      "name": "Clear Build Claim",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3080,
+        160
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Config').first().json.keys.build_prefix }}{{ $json.repository_owner }}/{{ $json.repository_name }}#{{ $json.issue_number }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "d93fffbf-f887-4207-86ed-97eb483ede8e",
+      "name": "Clear Gate Marker",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3300,
+        160
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "=gate:{{ $('Is Hold Removal').item.json.repository_owner }}/{{ $('Is Hold Removal').item.json.repository_name }}#{{ $('Is Hold Removal').item.json.issue_number }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "1dc503e0-c8e8-425d-9564-5467b620d414",
+      "name": "Restore Event Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        160
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "return { json: $('Is Hold Removal').item.json };"
+      }
     }
   ],
   "connections": {
@@ -983,7 +1068,7 @@
       "main": [
         [
           {
-            "node": "Build Intake Item",
+            "node": "Is Hold Removal",
             "type": "main",
             "index": 0
           }
@@ -1013,6 +1098,57 @@
         [
           {
             "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hold Removal": {
+      "main": [
+        [
+          {
+            "node": "Clear Build Claim",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Build Claim": {
+      "main": [
+        [
+          {
+            "node": "Clear Gate Marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Gate Marker": {
+      "main": [
+        [
+          {
+            "node": "Restore Event Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Event Fields": {
+      "main": [
+        [
+          {
+            "node": "Build Intake Item",
             "type": "main",
             "index": 0
           }
