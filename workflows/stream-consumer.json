@@ -5,26 +5,6 @@
   "active": true,
   "nodes": [
     {
-      "id": "f16ca477-f460-400f-bcff-5b32ccca7cbb",
-      "name": "Drain Queue Every Minute",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        112
-      ],
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 1
-            }
-          ]
-        }
-      }
-    },
-    {
       "id": "5cebfb54-0ca3-420e-b9b3-0ec37481b973",
       "name": "Pop Queue Item",
       "type": "n8n-nodes-base.redis",
@@ -431,6 +411,49 @@
         "language": "javaScript",
         "jsCode": "// One item per configured stream: this consumer serves every stream, one pop each per tick.\nconst cfg = $input.first().json;\nconst names = new Set([cfg.streams.default, ...((cfg.streams.rules || []).map(r => r.stream))].filter(Boolean));\nreturn [...names].map(s => ({ json: { stream: s, list: cfg.queues.stream_prefix + s } }));"
       }
+    },
+    {
+      "id": "e6ad374e-5f13-45d5-8c8e-b4cceda7c134",
+      "name": "Is Issue Ticket",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        -120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ /\\/issues\\/\\d+$/.test(String(($('Pop Queue Item').item.json.item || {}).issue_url || '')) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2f5aec67-eeea-4697-a1c7-b91dc427fa08",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        60
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
     }
   ],
   "connections": {
@@ -478,7 +501,7 @@
       "main": [
         [
           {
-            "node": "Generate TDD BDD Spec",
+            "node": "Is Issue Ticket",
             "type": "main",
             "index": 0
           }
@@ -565,17 +588,6 @@
         ]
       ]
     },
-    "Drain Queue Every Minute": {
-      "main": [
-        [
-          {
-            "node": "Load Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Load Config": {
       "main": [
         [
@@ -614,6 +626,35 @@
         [
           {
             "node": "Mark Spec Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Issue Ticket": {
+      "main": [
+        [
+          {
+            "node": "Generate TDD BDD Spec",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Already Handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Called": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
             "type": "main",
             "index": 0
           }
