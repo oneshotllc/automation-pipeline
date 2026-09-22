@@ -5,26 +5,6 @@
   "active": true,
   "nodes": [
     {
-      "id": "d75ecfdf-1aac-433a-8c5c-8a1bb13151e5",
-      "name": "Every Minute",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        0
-      ],
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 1
-            }
-          ]
-        }
-      }
-    },
-    {
       "id": "f2262c1a-9c26-4e5d-91c5-a6f18011c4ce",
       "name": "Load Config",
       "type": "n8n-nodes-base.redis",
@@ -371,20 +351,22 @@
         "errorType": "errorMessage",
         "errorMessage": "=dispatch failed for {{ $('Dispatch Inputs').item.json.repo }}#{{ $('Dispatch Inputs').item.json.issue }}; item requeued for the next tick"
       }
+    },
+    {
+      "id": "72afa52b-17c6-4ed8-96fa-b23e5de37a50",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        60
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
     }
   ],
   "connections": {
-    "Every Minute": {
-      "main": [
-        [
-          {
-            "node": "Load Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Load Config": {
       "main": [
         [
@@ -510,6 +492,17 @@
         [
           {
             "node": "Wrong PR State For Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Called": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
             "type": "main",
             "index": 0
           }

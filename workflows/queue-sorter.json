@@ -5,26 +5,6 @@
   "active": true,
   "nodes": [
     {
-      "id": "096d972a-b8bd-440e-9b61-b93be114da7a",
-      "name": "Every Minute",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
-      "position": [
-        0,
-        0
-      ],
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 1
-            }
-          ]
-        }
-      }
-    },
-    {
       "id": "e4116335-9872-486e-ab4f-c303b6632d7a",
       "name": "Pop Intake Item",
       "type": "n8n-nodes-base.redis",
@@ -647,7 +627,7 @@
       "parameters": {
         "mode": "runOnceForEachItem",
         "language": "javaScript",
-        "jsCode": "// Feedback and repair items skip triage and go straight to the build queue; pipeline-repair items (a failed run of the build workflow) are claimed per run and capped per day; pull requests authored by a configured bot are never triaged; issues that already carry the configured spec label are marked specified and skip triage; an item with no issue number (nothing to comment on) is dropped.\nconst cfg = $('Config').first().json;\nconst it = $json.item || {};\nconst isFeedback = it.stage === 'feedback' || it.stage === 'repair';\nconst isRepair = it.stage === 'repair';\nconst isPipelineRepair = it.stage === 'pipeline-repair';\nconst prc = cfg.pipeline_repair || {};\nconst isPR = /\\/pull\\/\\d+/.test(String(it.issue_url || ''));\nconst labels = (it.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst botPR = isPR && (cfg.bots || []).includes(String(it.author || ''));\nconst noIssue = !isPipelineRepair && !(Number(it.issue_number) > 0);\nconst specPresent = !isPR && !isPipelineRepair && !!cfg.labels.spec_present && labels.includes(cfg.labels.spec_present);\nconst key = `${it.repository_owner}/${it.repository_name}#${it.issue_number}`;\nconst prKey = `${it.repository_owner}/${it.repository_name}#${it.pr_number || ''}`;\nconst claimPrefix = isRepair ? cfg.repair.claim_prefix : cfg.feedback.claim_prefix;\nreturn { json: { item: it, key, isFeedback, isRepair, isPipelineRepair, drop: (botPR && !isFeedback) || noIssue, specPresent, seen_key: cfg.keys.seen_prefix + key, spec_key: cfg.keys.spec_prefix + key, feedback_claim: isFeedback ? `${claimPrefix}${key}@${it.feedback_id || ''}` : '', attempts_key: isRepair ? `${cfg.repair.attempts_prefix}${prKey}` : '', max_attempts: Number((cfg.repair && cfg.repair.max_attempts) || 3),\n  pipeline_claim: isPipelineRepair ? String(prc.claim_prefix || 'pipeline-repair:') + String(it.run_id || '') : '', pipeline_day_key: isPipelineRepair ? String(prc.daily_prefix || 'pipeline-repair-day:') + new Date().toISOString().slice(0, 10) : '', pipeline_max: Number(prc.max_per_day || 5), pipeline_blocked: prc.enabled === false || String(it.target_mode || '') === 'pipeline-repair' || !it.run_id } };"
+        "jsCode": "// Triage works on issue tickets only. Three kinds of item exist:\n//  - an issue ticket (URL is .../issues/N): triaged, then released to build when approved;\n//  - feedback / repair (review comments or failing checks on a pipeline PR) and pipeline-repair (a failed build run): their own paths, no triage;\n//  - anything else: dropped.\nconst cfg = $('Config').first().json;\nconst it = $json.item || {};\nconst isFeedback = it.stage === 'feedback' || it.stage === 'repair';\nconst isRepair = it.stage === 'repair';\nconst isPipelineRepair = it.stage === 'pipeline-repair';\nconst isIssue = !isFeedback && !isPipelineRepair && /\\/issues\\/\\d+$/.test(String(it.issue_url || '')) && Number(it.issue_number) > 0;\nconst prc = cfg.pipeline_repair || {};\nconst labels = (it.labels || []).map(l => typeof l === 'string' ? l : (l && l.name) || '');\nconst specPresent = isIssue && !!cfg.labels.spec_present && labels.includes(cfg.labels.spec_present);\nconst key = `${it.repository_owner}/${it.repository_name}#${it.issue_number}`;\nconst prKey = `${it.repository_owner}/${it.repository_name}#${it.pr_number || ''}`;\nconst claimPrefix = isRepair ? cfg.repair.claim_prefix : cfg.feedback.claim_prefix;\nreturn { json: { item: it, key, isFeedback, isRepair, isPipelineRepair, isIssue, drop: !(isIssue || isFeedback || isPipelineRepair), specPresent, seen_key: cfg.keys.seen_prefix + key, spec_key: cfg.keys.spec_prefix + key, feedback_claim: isFeedback ? `${claimPrefix}${key}@${it.feedback_id || ''}` : '', attempts_key: isRepair ? `${cfg.repair.attempts_prefix}${prKey}` : '', max_attempts: Number((cfg.repair && cfg.repair.max_attempts) || 3),\n  pipeline_claim: isPipelineRepair ? String(prc.claim_prefix || 'pipeline-repair:') + String(it.run_id || '') : '', pipeline_day_key: isPipelineRepair ? String(prc.daily_prefix || 'pipeline-repair-day:') + new Date().toISOString().slice(0, 10) : '', pipeline_max: Number(prc.max_per_day || 5), pipeline_blocked: prc.enabled === false || String(it.target_mode || '') === 'pipeline-repair' || !it.run_id } };"
       }
     },
     {
@@ -1559,6 +1539,559 @@
           "name": "Redis (local triage queue)"
         }
       }
+    },
+    {
+      "id": "c5cb2490-8568-4d1c-bd1d-4cc53dc5ec41",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        60
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "b58a785e-cc56-4082-b6cb-5c71d07822ad",
+      "name": "Run Consumer",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "8ukVVloMcWl0jMkz"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "workflowInputs": {
+          "mappingMode": "passThrough"
+        }
+      }
+    },
+    {
+      "id": "9bd40424-35ae-4e83-b9ca-45ef57eba760",
+      "name": "Run Dispatcher",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3080,
+        -140
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3zS0ikpHmlLbf3Um"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "workflowInputs": {
+          "mappingMode": "passThrough"
+        }
+      }
+    },
+    {
+      "id": "325735e6-2a85-4a72-b9c9-9b3d864123b1",
+      "name": "Run Dispatcher For Feedback",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        -440
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3zS0ikpHmlLbf3Um"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "workflowInputs": {
+          "mappingMode": "passThrough"
+        }
+      }
+    },
+    {
+      "id": "d243831e-8db6-4815-a84e-44d0d33bb065",
+      "name": "Restore Build Item",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        -880
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Restoration: the failed run was a ticket build, so the ticket is released to build again with the branch it left behind.\nconst cfg = $('Config').first().json;\nconst src = $('Pop Intake Item').item.json.item;\nif (String(src.target_mode || '') !== 'build' || !(Number(src.target_issue) > 0) || !src.target_repo) return [];\nconst [owner, name] = String(src.target_repo).split('/');\nconst full = `${owner}/${name}`;\nconst globToRe = g => new RegExp('^' + String(g).split('*').map(s => s.replace(/[.+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('.*') + '$');\nlet stream = null;\nfor (const r of ((cfg.streams && cfg.streams.rules) || [])) { if (r && r.repo && globToRe(r.repo).test(full)) { stream = r.stream; break; } }\nif (!stream) stream = (cfg.streams && cfg.streams.default) || null;\nif (!stream) return [];\nconst key = `${full}#${src.target_issue}`;\nconst item = { delivery_id: 'restore:' + src.run_id, repository_owner: owner, repository_name: name, issue_number: Number(src.target_issue), stage: 'build', restoration: true, failed_run_url: src.run_url, title: src.run_title, body: '', labels: [], author: '', issue_url: `https://github.com/${full}/issues/${src.target_issue}`, stream };\nreturn { json: { key, owner, name, issue: Number(src.target_issue), attempts_key: String(cfg.keys.build_attempts_prefix || 'build-attempts:') + key, max_attempts: Number((cfg.build || {}).max_attempts || 1), hold: cfg.labels.hold, needs_triage: cfg.labels.needs_triage, list: cfg.queues.build_prefix + stream, payload: JSON.stringify(item) } };"
+      }
+    },
+    {
+      "id": "c868769c-253b-4d4f-b4ef-f32774947a6d",
+      "name": "Count Restore Attempt",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        -880
+      ],
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ $json.attempts_key }}",
+        "expire": true,
+        "ttl": 2592000
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "224073b6-eefd-48db-ad9e-7a7250976c49",
+      "name": "Under Restore Cap",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        -880
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number(Object.values($json)[0]) <= $('Restore Build Item').item.json.max_attempts }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "936f9fdf-0b18-4b7a-bb9c-efceff012a1d",
+      "name": "Push Restore To Build Queue",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2860,
+        -960
+      ],
+      "parameters": {
+        "operation": "push",
+        "list": "={{ $('Restore Build Item').item.json.list }}",
+        "messageData": "={{ $('Restore Build Item').item.json.payload }}",
+        "tail": false
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "5272a5b3-cd61-4bc8-9ce6-cf2028c420ec",
+      "name": "Run Dispatcher For Restore",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3080,
+        -960
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3zS0ikpHmlLbf3Um"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "workflowInputs": {
+          "mappingMode": "passThrough"
+        }
+      }
+    },
+    {
+      "id": "8e94d2ca-39e7-49cd-9f40-3d78fae82f9a",
+      "name": "Restore Cap: Comment On Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        -780
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Restore Build Item').item.json.owner }}/{{ $('Restore Build Item').item.json.name }}/issues/{{ $('Restore Build Item').item.json.issue }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: 'Restoration stopped: this ticket\\'s build failed ' + $('Restore Build Item').item.json.max_attempts + ' times in a row (last run: ' + ($('Pop Intake Item').item.json.item.run_url || '') + '). The build comments above say why each attempt stopped; the ticket needs to answer them. The `' + $('Restore Build Item').item.json.hold + '` label is back; remove it to start again.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "78747ae8-564d-42e4-9ffd-b869e14282cc",
+      "name": "Restore Cap: Re-hold Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        -780
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Restore Build Item').item.json.owner }}/{{ $('Restore Build Item').item.json.name }}/issues/{{ $('Restore Build Item').item.json.issue }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: [ $('Restore Build Item').item.json.hold, $('Restore Build Item').item.json.needs_triage ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "1e9a2b90-78ef-4460-a8e9-790bd32577fb",
+      "name": "Reset Restore Attempts",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        3300,
+        -780
+      ],
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $('Restore Build Item').item.json.attempts_key }}"
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "9bf4c239-0496-4863-9500-aff558aa2eec",
+      "name": "Ticket Complete",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2090,
+        -40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const b = String($('Pop Intake Item').item.json.item.body || ''); return /\\*\\*Decision/i.test(b) && /\\*\\*Scope/i.test(b) && /\\*\\*Scenarios/i.test(b) && /\\*\\*Done when/i.test(b); })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "eadea7db-a105-442b-96f4-8206f7e9bba4",
+      "name": "Already Gated",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2310,
+        80
+      ],
+      "parameters": {
+        "operation": "get",
+        "propertyName": "gated",
+        "key": "=gate:{{ $('Approval Eligibility').item.json.key }}",
+        "keyType": "string",
+        "options": {}
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "c6f98e7a-8a6a-4788-970d-043e57dc4cf5",
+      "name": "Not Yet Told",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2530,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.gated }}",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2fd3c199-c8cc-4074-b3d1-2de32453b5db",
+      "name": "Explain Missing Sections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2750,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/comments",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const b = String($('Pop Intake Item').item.json.item.body || ''); const missing = [['Decision', /\\*\\*Decision/i], ['Scope', /\\*\\*Scope/i], ['Scenarios', /\\*\\*Scenarios/i], ['Done when', /\\*\\*Done when/i]].filter(([n, r]) => !r.test(b)).map(([n]) => n); return JSON.stringify({ body: 'Not released: this ticket is missing ' + missing.join(', ') + '. A ticket is built only when it carries Decision, Scope, Scenarios and Done when (the Ticket form has them). Add the missing sections, then remove the `' + $('Config').first().json.labels.hold + '` label again.' }); })() }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "a5d5cd1e-4c8c-4e58-bde9-4dca884ff4f1",
+      "name": "Mark Gated",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        2970,
+        80
+      ],
+      "parameters": {
+        "operation": "set",
+        "key": "=gate:{{ $('Approval Eligibility').item.json.key }}",
+        "value": "1",
+        "keyType": "string",
+        "expire": true,
+        "ttl": 86400
+      },
+      "credentials": {
+        "redis": {
+          "id": "redisLocalQueue1",
+          "name": "Redis (local triage queue)"
+        }
+      }
+    },
+    {
+      "id": "b36067df-fed2-4fa1-9ede-5103f937488c",
+      "name": "Target Ticket State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2310,
+        -880
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.name }}/issues/{{ $json.issue }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
+    },
+    {
+      "id": "6b851316-a925-4bce-bf14-cc4fd9a9795c",
+      "name": "Target Open And Not Held",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        -1000
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.state === 'open' && !(($json.labels || []).map(l => l.name)).includes($('Restore Build Item').item.json.hold) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "6e861f8e-bc82-41bb-8a7c-a13db2e78d48",
+      "name": "Re-hold Incomplete Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Pop Intake Item').item.json.item.repository_owner }}/{{ $('Pop Intake Item').item.json.item.repository_name }}/issues/{{ $('Pop Intake Item').item.json.item.issue_number }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: [ $('Config').first().json.labels.hold ] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "ghAppOneshotPr01",
+          "name": "GitHub App - oneshot-pr-bot"
+        }
+      }
     }
   ],
   "connections": {
@@ -1642,17 +2175,6 @@
         ]
       ]
     },
-    "Push To Stream Queue": {
-      "main": [
-        [
-          {
-            "node": "Pop Intake Item",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Approval Eligibility": {
       "main": [
         [
@@ -1697,7 +2219,7 @@
       "main": [
         [
           {
-            "node": "Blockers",
+            "node": "Ticket Complete",
             "type": "main",
             "index": 0
           }
@@ -1745,28 +2267,6 @@
         [
           {
             "node": "Push To Build Queue",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Push To Build Queue": {
-      "main": [
-        [
-          {
-            "node": "Pop Intake Item",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Every Minute": {
-      "main": [
-        [
-          {
-            "node": "Load Config",
             "type": "main",
             "index": 0
           }
@@ -1981,17 +2481,6 @@
         [
           {
             "node": "Push Feedback To Build Queue",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Push Feedback To Build Queue": {
-      "main": [
-        [
-          {
-            "node": "Pop Intake Item",
             "type": "main",
             "index": 0
           }
@@ -2289,6 +2778,11 @@
             "node": "Pipeline Repair Payload",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Restore Build Item",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -2327,6 +2821,265 @@
         [
           {
             "node": "Route To Stream",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Called": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push To Stream Queue": {
+      "main": [
+        [
+          {
+            "node": "Run Consumer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Consumer": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push To Build Queue": {
+      "main": [
+        [
+          {
+            "node": "Run Dispatcher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Dispatcher": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Feedback To Build Queue": {
+      "main": [
+        [
+          {
+            "node": "Run Dispatcher For Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Dispatcher For Feedback": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Restore Attempt": {
+      "main": [
+        [
+          {
+            "node": "Under Restore Cap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Under Restore Cap": {
+      "main": [
+        [
+          {
+            "node": "Push Restore To Build Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Restore Cap: Comment On Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push Restore To Build Queue": {
+      "main": [
+        [
+          {
+            "node": "Run Dispatcher For Restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Cap: Comment On Ticket": {
+      "main": [
+        [
+          {
+            "node": "Restore Cap: Re-hold Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Cap: Re-hold Ticket": {
+      "main": [
+        [
+          {
+            "node": "Reset Restore Attempts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket Complete": {
+      "main": [
+        [
+          {
+            "node": "Blockers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Already Gated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Gated": {
+      "main": [
+        [
+          {
+            "node": "Not Yet Told",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Yet Told": {
+      "main": [
+        [
+          {
+            "node": "Explain Missing Sections",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Gated": {
+      "main": [
+        [
+          {
+            "node": "Pop Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Build Item": {
+      "main": [
+        [
+          {
+            "node": "Target Ticket State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Target Ticket State": {
+      "main": [
+        [
+          {
+            "node": "Target Open And Not Held",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Target Open And Not Held": {
+      "main": [
+        [
+          {
+            "node": "Count Restore Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drop Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explain Missing Sections": {
+      "main": [
+        [
+          {
+            "node": "Re-hold Incomplete Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-hold Incomplete Ticket": {
+      "main": [
+        [
+          {
+            "node": "Mark Gated",
             "type": "main",
             "index": 0
           }

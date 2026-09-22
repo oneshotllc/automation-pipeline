@@ -179,7 +179,7 @@
               }
             },
             {
-              "leftValue": "={{ $json.check_event || !$json.actor_is_bot || ['opened','reopened','closed'].includes($json.action) }}",
+              "leftValue": "={{ $json.check_event || !$json.actor_is_bot || ['opened','reopened','closed'].includes($json.action) || ($json.action === 'unlabeled' && $json.changed_label === $('Config').first().json.labels.hold) }}",
               "operator": {
                 "type": "boolean",
                 "operation": "true",
@@ -613,6 +613,60 @@
           "combinator": "and"
         }
       }
+    },
+    {
+      "id": "a822337f-51a5-4cef-a8a5-e4d266987f98",
+      "name": "Is Issue Event",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.event === 'issues' && /\\/issues\\/\\d+$/.test(String($json.issue_url || '')) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "ff8e46c9-b306-409e-9438-ba2778137e7a",
+      "name": "Run Sorter",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        400
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "EuMYAIadQbkYh0FH"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        },
+        "workflowInputs": {
+          "mappingMode": "passThrough"
+        }
+      }
     }
   ],
   "connections": {
@@ -685,17 +739,6 @@
         ]
       ]
     },
-    "Enqueue To Redis Queue": {
-      "main": [
-        [
-          {
-            "node": "Respond 202",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Dropped": {
       "main": [
         [
@@ -718,7 +761,7 @@
         ],
         [
           {
-            "node": "Build Intake Item",
+            "node": "Is Issue Event",
             "type": "main",
             "index": 0
           }
@@ -930,6 +973,46 @@
         [
           {
             "node": "Is Failed Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Issue Event": {
+      "main": [
+        [
+          {
+            "node": "Build Intake Item",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dropped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enqueue To Redis Queue": {
+      "main": [
+        [
+          {
+            "node": "Run Sorter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Sorter": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
             "type": "main",
             "index": 0
           }
