@@ -1651,7 +1651,7 @@
       ],
       "parameters": {
         "operation": "incr",
-        "key": "={{ $json.attempts_key }}",
+        "key": "={{ $('Restore Build Item').item.json.attempts_key }}",
         "expire": true,
         "ttl": 2592000
       },
@@ -2749,6 +2749,11 @@
             "node": "Count Repairs Today",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Restore Build Item",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -2776,11 +2781,6 @@
         [
           {
             "node": "Pipeline Repair Payload",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Restore Build Item",
             "type": "main",
             "index": 0
           }
